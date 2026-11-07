@@ -213,7 +213,9 @@
         .due { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--rule); padding-top: 14px; }
         .due > div { display: flex; flex-direction: column; min-width: 0; }
         .due > div + div { padding-left: 16px; border-left: 1px solid var(--rule); }
-        .due .num { font-size: 34px; line-height: 1.1; }
+        .due .num, .vd .num { font-size: 34px; line-height: 1.1; }
+        .vd { display: flex; flex-direction: column; min-width: 0; }
+        .vd .num { overflow-wrap: anywhere; }
         /* barre */
         .mg { margin-top: -14px; }
         .mg > div { display: flex; flex-direction: column; gap: 8px; padding: 12px 0; border-top: 1px solid var(--rule); }
@@ -560,6 +562,9 @@
     const MEDIE_DEFAULT = [1.45, 1.15];
     const K_SHRINK = 5;   // partite "virtuali" di regressione verso la media
     const MAX_GOL = 10;   // dimensione della matrice Poisson
+    const RHO_DC = -0.10; // correzione di Dixon-Coles sui punteggi bassi: valore tipico, non stimato sui nostri dati
+    const VALORE_SCARTO_MIN = 4;   // punti di scarto modello-mercato per parlare di "spunto di valore"
+    const VALORE_P_MIN = 0.25;     // sotto questa probabilità lo scarto è troppo rumoroso (esiti improbabili)
     const TAB = ['sintesi', 'quote', 'punteggi', 'squadre'];
     const TAB_NOME = { sintesi: 'Sintesi', quote: 'Quote', punteggi: 'Punteggi', squadre: 'Squadre' };
 
@@ -1094,7 +1099,7 @@
         const n = stimaChiamateAnalisi(m);
         box.innerHTML = `<div class="corpo-an" style="max-width:640px">
             <section class="sez"><div class="sez-h"><h2>Cosa ottieni</h2></div>
-                <div class="vantaggi"><div>${ic('check', 20)}Probabilità 1X2 e mercati gol</div><div>${ic('check', 20)}Gol attesi e risultati esatti</div><div>${ic('check', 20)}Confronto tra le squadre e assenze</div></div>
+                <div class="vantaggi"><div>${ic('check', 20)}Verdetto, probabilità 1X2 e mercati gol</div><div>${ic('check', 20)}Gol attesi e risultati esatti</div><div>${ic('check', 20)}Confronto tra le squadre e assenze</div></div>
                 <p style="font-size:15px;line-height:1.5;color:var(--ink2)">Servono 3 chiamate: previsioni, classifica e infortuni. Poi i dati restano in cache per 6 ore. Le quote si aggiungono dopo, con una chiamata.</p>
             </section>
             ${stato.errore ? `<div class="avviso err" role="alert">${ic('info', 20)}<span>${esc(stato.errore)}</span></div>` : ''}
@@ -1194,7 +1199,14 @@
         const pC = [], pO = [];
         for (let k = 0; k <= MAX_GOL; k++) { pC.push(poisson(k, lamCasa)); pO.push(poisson(k, lamOspite)); }
         const sC = pC.reduce((a, b) => a + b, 0), sO = pO.reduce((a, b) => a + b, 0);
-        const M = pC.map(ph => pO.map(pa => (ph / sC) * (pa / sO)));
+        // correzione di Dixon-Coles: l'indipendenza sottostima 0-0 e 1-1 e sovrastima 1-0 e 0-1
+        const tau = (h, a) => h === 0 && a === 0 ? 1 - lamCasa * lamOspite * RHO_DC
+            : h === 0 && a === 1 ? 1 + lamCasa * RHO_DC
+            : h === 1 && a === 0 ? 1 + lamOspite * RHO_DC
+            : h === 1 && a === 1 ? 1 - RHO_DC : 1;
+        const Mgrezza = pC.map((ph, h) => pO.map((pa, a) => (ph / sC) * (pa / sO) * tau(h, a)));
+        const sM = Mgrezza.reduce((s, r) => s + r.reduce((x, y) => x + y, 0), 0);
+        const M = Mgrezza.map(r => r.map(p => p / sM));
 
         let p1 = 0, pX = 0, p2 = 0, pGG = 0;
         const over = { 0.5: 0, 1.5: 0, 2.5: 0, 3.5: 0, 4.5: 0 };
@@ -1220,6 +1232,12 @@
         for (let i = 2; i <= k; i++) logFatt += Math.log(i);
         return Math.exp(k * Math.log(lambda) - lambda - logFatt);
     }
+    // probabilità di fare più di "soglia" eventi (soglia tipo 3.5) con media lam
+    function probOver(lam, soglia) {
+        let c = 0;
+        for (let k = 0; k <= Math.floor(soglia); k++) c += poisson(k, lam);
+        return clamp(1 - c, 0, 1);
+    }
 
     function cartelliniPerPartita(stats, tipo) {
         const c = stats.cards && stats.cards[tipo];
@@ -1231,7 +1249,7 @@
     }
 
     // ===================== RENDER DELLE SCHEDE =====================
-    const sez = (titolo, corpo, nota, card) => `<section class="sez${card ? ' card' : ''}"${card ? '' : ''}><div class="sez-h"><h2>${titolo}</h2>${nota ? `<span class="lbl">${nota}</span>` : ''}</div>${corpo}</section>`;
+    const sez = (titolo, corpo, nota, card) => `<section class="sez${card ? ' card' : ''}"><div class="sez-h"><h2>${titolo}</h2>${nota ? `<span class="lbl">${nota}</span>` : ''}</div>${corpo}</section>`;
     const qEqua = p => p > 0 ? `quota equa ${it(1 / p, 2)}` : '';
     const nomi = () => ({ casa: esc(stato.partita.teams.home.name), osp: esc(stato.partita.teams.away.name) });
 
@@ -1256,7 +1274,7 @@
              <div class="due"><div><span class="lbl">Gol attesi</span><span class="num"><span style="color:var(--casa)">${it(md.lamCasa, 2)}</span> – <span style="color:var(--osptx)">${it(md.lamOspite, 2)}</span></span><span class="lbl">totale ${it(md.lamCasa + md.lamOspite, 2)}</span></div>
                   <div><span class="lbl">Risultato più probabile</span><span class="num">${top.h}–${top.a}</span><span class="lbl tn">${pc(top.p)}</span></div></div>`,
             `affidabilità ${md.affidabilita}, ${md.campione} gare`, true);
-        const righeGol = [['Goal, entrambe segnano', md.pGG], ['Over 1,5', md.over[1.5]], ['Over 2,5', md.over[2.5]], ['Over 3,5', md.over[3.5]]]
+        const righeGol = [['Goal, entrambe segnano', md.pGG], ['No Goal', 1 - md.pGG], ['Over 1,5', md.over[1.5]], ['Over 2,5', md.over[2.5]], ['Under 2,5', 1 - md.over[2.5]], ['Over 3,5', md.over[3.5]]]
             .map(([t, p]) => `<div><div class="r"><span>${t}</span><span><span class="lbl tn">${qEqua(p)}</span><span class="num">${pc(p)}</span></span></div><div class="bar"><div style="width:${(p * 100).toFixed(1)}%"></div></div></div>`).join('');
         const gol = sez('Mercati gol', `<div class="mg">${righeGol}</div>`);
         const nota = md.muReale ? '' : `<div class="avviso">${ic('info', 20, 'margin-top:1px')}<span>Classifica non disponibile col piano gratuito: uso le medie tipiche del campionato (casa ${it(md.mu.muCasa, 2)}, trasferta ${it(md.mu.muOspite, 2)}).</span></div>`;
@@ -1266,8 +1284,59 @@
             <span>λ casa = ${f(md.mu.muCasa)} × attacco <b class="b">${f(md.attCasa)}</b> × difesa avversaria <b class="b">${f(md.difOspite)}</b>.</span>
             <span>λ trasferta = ${f(md.mu.muOspite)} × attacco <b class="b">${f(md.attOspite)}</b> × difesa avversaria <b class="b">${f(md.difCasa)}</b>.</span>
             <span>${n.casa}: ${md.nCasaH} gare in casa su ${md.nTotH} (fatti ${f(md.HGF)}, subiti ${f(md.HGA)} a partita). ${n.osp}: ${md.nOspA} fuori su ${md.nTotA} (fatti ${f(md.AGF)}, subiti ${f(md.AGA)}). Le forze sono avvicinate alla media (K = ${K_SHRINK}), perché poche partite non bastano a stimarle.</span>
-            <span>Le probabilità vengono da una matrice Poisson indipendente, da 0 a ${MAX_GOL} gol per squadra. La quota equa è 1 diviso la probabilità e non include il margine del bookmaker.</span></div></details>`;
-        $('grp-sintesi').innerHTML = `<div class="grid2">${verdetto}<div class="pila">${gol}${nota}</div></div>${metodo}`;
+            <span>Le probabilità vengono da una matrice Poisson da 0 a ${MAX_GOL} gol per squadra, con la correzione di Dixon-Coles sui punteggi bassi (0-0, 1-0, 0-1, 1-1): ρ = ${it(RHO_DC, 2)}, un valore tipico non stimato sui nostri dati. Rende un po' più probabili i pareggi con pochi gol, che il Poisson puro sottostima.</span>
+            <span>La quota equa è 1 diviso la probabilità e non include il margine del bookmaker.</span></div></details>`;
+        $('grp-sintesi').innerHTML = `<div class="grid2"><div class="pila"><div id="verdetto"></div>${verdetto}</div><div class="pila">${gol}${nota}</div></div>${metodo}`;
+        renderVerdetto();
+    }
+
+    // ----- Verdetto: la risposta in una riga, in cima alla Sintesi -----
+    function nomeEsito(e) {
+        const t = stato.partita.teams;
+        return ({ Home: `1 ${t.home.name}`, Draw: 'X Pareggio', Away: `2 ${t.away.name}`, 'Over 2.5': 'Over 2,5', 'Under 2.5': 'Under 2,5', Yes: 'Goal', No: 'No Goal' })[e] || e;
+    }
+    const probEsiti = md => ({ Home: md.p1, Draw: md.pX, Away: md.p2, 'Over 2.5': md.over[2.5], 'Under 2.5': 1 - md.over[2.5], Yes: md.pGG, No: 1 - md.pGG });
+    const costoQuote = () => inCache(api.quote(stato.partita.fixture.id), TTL.quote) ? 'Dati già in cache, nessuna chiamata' : 'Costa 1 chiamata';
+
+    // modello contro mercato, esito per esito
+    function confrontoQuote(md, q) {
+        const mod = probEsiti(md), out = [];
+        Object.entries(q.mercati).forEach(([g, lista]) => lista.forEach(r =>
+            out.push({ g, esito: r.esito, quota: r.quota, mercato: r.implicita, modello: mod[r.esito], sc: (mod[r.esito] - r.implicita) * 100 })));
+        return out;
+    }
+
+    function renderVerdetto() {
+        const el = $('verdetto'); if (!el || !stato.analisi || !stato.partita) return;
+        const md = stato.analisi.modello, q = stato.quote, t = stato.partita.teams;
+        const nota = x => `<span class="lbl" style="line-height:1.5">${x}</span>`;
+        const scelta = (etichetta, nome) => `<div class="vd"><span class="lbl">${etichetta}</span><span class="num">${nome}</span></div>`;
+        let corpo, avvisi = '', cta = '';
+
+        if (q && !q.errore) {
+            const cand = confrontoQuote(md, q);
+            const best = cand.filter(c => c.modello >= VALORE_P_MIN && c.sc >= VALORE_SCARTO_MIN).sort((x, y) => y.sc - x.sc)[0];
+            if (best) {
+                const cella = (l, v, stile) => `<div><span class="lbl">${l}</span><span class="num"${stile ? ` style="${stile}"` : ''}>${v}</span></div>`;
+                corpo = scelta('Spunto di valore', esc(nomeEsito(best.esito)))
+                    + `<div class="dc3">${cella('Modello', pc(best.modello))}${cella('Mercato', pc(best.mercato))}${cella('Scarto', '+' + it(best.sc), 'color:var(--ok)')}</div>`
+                    + nota(`Quota ${it(best.quota, 2)}, quota equa ${it(1 / best.modello, 2)}. Segnale da verificare: il mercato conosce formazioni e notizie che il modello non vede.`);
+            } else {
+                const maxSc = Math.max(...cand.map(c => Math.abs(c.sc)));
+                corpo = scelta('Modello e mercato allineati', 'Nessun valore')
+                    + nota(`Scarto massimo ${it(maxSc)} punti, sotto la soglia di ${VALORE_SCARTO_MIN}.`);
+            }
+        } else {
+            const [sim, nomeTop, pTop] = [['1', t.home.name, md.p1], ['X', 'Pareggio', md.pX], ['2', t.away.name, md.p2]].sort((x, y) => y[2] - x[2])[0];
+            corpo = scelta('Esito più probabile', `${sim} ${esc(nomeTop)}`) + nota(`Probabilità ${pc(pTop, 0)}. Senza le quote non si può dire se convenga.`);
+            if (q && q.errore) avvisi += `<div class="avviso err" role="alert">${ic('info', 20)}<span>${esc(q.errore)}</span></div>`;
+            cta = `<div class="cta"><button type="button" class="btn" id="btnQuoteVerdetto">${q && q.errore ? 'Riprova' : 'Carica le quote'}</button><div class="lbl">${costoQuote()}</div></div>`;
+        }
+        if (md.affidabilita === 'bassa') {
+            avvisi += `<div class="avviso">${ic('info', 20, 'margin-top:1px')}<span>Campione ridotto: solo ${md.campione} gare. Cautela.</span></div>`;
+        }
+        el.innerHTML = sez('Verdetto', corpo + avvisi + cta, `affidabilità ${md.affidabilita}, ${md.campione} gare`);
+        const b = $('btnQuoteVerdetto'); if (b) b.onclick = () => caricaQuote();
     }
 
     // ----- Quote -----
@@ -1275,6 +1344,7 @@
         const m = stato.partita, md = stato.analisi && stato.analisi.modello;
         if (!m || !md) return;
         const btn = $('btnQuote'); if (btn) { btn.disabled = true; }
+        const bv = $('btnQuoteVerdetto'); if (bv) { bv.disabled = true; bv.innerHTML = '<span class="spin"></span>Carico le quote'; }
         try {
             const data = await chiamaApi(api.quote(m.fixture.id), TTL.quote, { ttlErrore: TTL.quote });
             if (!stato.partita || stato.partita.fixture.id !== m.fixture.id) return;
@@ -1286,6 +1356,7 @@
             stato.quote = { errore: `Quote non disponibili: ${e.message}` };
         }
         renderQuote();
+        renderVerdetto();
     }
 
     function elaboraQuote(data) {
@@ -1317,14 +1388,15 @@
     function deltaHtml(d) {
         const cls = d >= 3 ? 'su' : d <= -3 ? 'giu' : '';
         const icn = d >= 3 ? 'up' : d <= -3 ? 'dn' : 'eq';
-        return `<span class="dl ${cls}">${ic(icn, 14)}${d > 0 ? '+' : d < 0 ? '−' : ''}${it(Math.abs(d))}</span>`;
+        const zero = Math.round(Math.abs(d) * 10) === 0;   // niente segno per uno scarto che si arrotonda a 0,0
+        return `<span class="dl ${cls}">${ic(icn, 14)}${zero ? '' : d > 0 ? '+' : '−'}${it(Math.abs(d))}</span>`;
     }
 
     function renderQuote() {
         const el = $('grp-quote'); if (!el) return;
         const md = stato.analisi && stato.analisi.modello; if (!md) return;
         const q = stato.quote;
-        const costa = inCache(api.quote(stato.partita.fixture.id), TTL.quote) ? 'Dati già in cache, nessuna chiamata' : 'Costa 1 chiamata';
+        const costa = costoQuote();
         if (!q || q.errore) {
             el.innerHTML = sez('Modello contro mercato',
                 `${q && q.errore ? `<div class="avviso err" role="alert">${ic('info', 20)}<span>${esc(q.errore)}</span></div>` : '<p style="font-size:16px;line-height:1.5;color:var(--ink2)">Confronta le probabilità del modello con quelle implicite nelle quote dei bookmaker e vedi dove si scostano di più.</p>'}
@@ -1334,7 +1406,7 @@
         }
         const nomiQ = { Home: '1  ' + stato.partita.teams.home.name, Draw: 'X  Pareggio', Away: '2  ' + stato.partita.teams.away.name, 'Over 2.5': 'Over 2,5', 'Under 2.5': 'Under 2,5', Yes: 'Goal', No: 'No Goal' };
         const titoli = { '1X2': '1X2', OU25: 'Over/Under 2,5', GG: 'Goal' };
-        const modello = { Home: md.p1, Draw: md.pX, Away: md.p2, 'Over 2.5': md.over[2.5], 'Under 2.5': 1 - md.over[2.5], Yes: md.pGG, No: 1 - md.pGG };
+        const modello = probEsiti(md);
         const tutte = [];
         let righe = `<div class="qg qh"><span>Esito</span><span class="q-wide">Quota</span><span>Modello</span><span>Mercato</span><span>Scarto</span></div>`;
         Object.entries(q.mercati).forEach(([g, lista]) => {
@@ -1379,8 +1451,9 @@
         }
         const leg3 = `<div class="leg"><span><i style="background:var(--casa)"></i>Vince ${n.casa}</span><span><i style="background:var(--ink3)"></i>Pareggio</span><span><i style="background:var(--osp)"></i>Vince ${n.osp}</span></div>`;
         const matrice = sez('Matrice dei risultati', `<div class="scroll-x"><div class="mx" style="min-width:300px">${cel}</div></div>${leg3}<span class="lbl">Righe: gol di ${n.casa}. Colonne: gol di ${n.osp}. Il riquadro spesso è il risultato più probabile.</span>`, 'valori in %');
-        const serie = lam => { const v = [0, 1, 2, 3, 4].map(k => poisson(k, lam) * 100); v.push(Math.max(0, 100 - v.reduce((x, y) => x + y, 0))); return v; };
-        const vc = serie(md.lamCasa), va = serie(md.lamOspite);
+        // distribuzioni marginali della matrice (già con la correzione sui punteggi bassi)
+        const serie = marg => { const v = [0, 1, 2, 3, 4].map(k => marg(k) * 100); v.push(Math.max(0, 100 - v.reduce((x, y) => x + y, 0))); return v; };
+        const vc = serie(k => md.M[k].reduce((s, x) => s + x, 0)), va = serie(k => md.M.reduce((s, r) => s + r[k], 0));
         const scala = Math.max(40, ...vc, ...va), alt = 150;
         const grp = ['0', '1', '2', '3', '4', '5+'].map((l, i) => {
             const hc = Math.max(3, vc[i] / scala * alt), ha = Math.max(3, va[i] / scala * alt);
@@ -1428,9 +1501,20 @@
         const f2 = v => v === null ? 'n/d' : it(v, 2);
         const totG = gC !== null && gO !== null ? it(gC + gO, 1) : 'n/d';
         const totR = rC !== null && rO !== null ? it(rC + rO, 2) : 'n/d';
+        // linee sui gialli totali: tre soglie attorno al valore atteso, quella più vicina al 50% è la più equilibrata
+        const lamG = gC !== null && gO !== null ? gC + gO : null;
+        let lineeG = '';
+        if (lamG !== null && lamG > 0) {
+            const base = Math.floor(lamG);
+            const righe = [base - 1, base, base + 1].filter(k => k >= 0).map(k => ({ s: k + 0.5, p: probOver(lamG, k + 0.5) }));
+            const eq = righe.reduce((m, r) => Math.abs(r.p - 0.5) < Math.abs(m.p - 0.5) ? r : m, righe[0]);
+            lineeG = '<div class="mg" style="margin-top:0">' + righe.map(r =>
+                `<div><div class="r"><span>Over ${it(r.s, 1)} gialli${r === eq ? '<br><span class="lbl">linea più equilibrata</span>' : ''}</span><span><span class="lbl tn">${qEqua(r.p)}</span><span class="num">${pc(r.p)}</span></span></div><div class="bar"><div style="width:${(r.p * 100).toFixed(1)}%"></div></div></div>`).join('') + '</div>';
+        }
         const disciplina = sez('Disciplina attesa',
             `<div class="dis"><div><span class="lbl">Gialli attesi</span><span class="num">${totG}</span><span class="lbl tn">${f2(gC)} e ${f2(gO)}</span></div><div><span class="lbl">Rossi attesi</span><span class="num">${totR}</span><span class="lbl tn">${f2(rC)} e ${f2(rO)}</span></div></div>
-             <span class="lbl" style="line-height:1.5">Somma delle medie stagionali di cartellini ricevuti. Non considera l'arbitro.</span>`);
+             ${lineeG}
+             <span class="lbl" style="line-height:1.5">Somma delle medie stagionali di cartellini ricevuti; le linee usano una distribuzione di Poisson, quindi sono indicative. Non considerano l'arbitro né l'importanza della partita.</span>`);
 
         const h2h = (a.prev.h2h || []).filter(f => f.goals && f.goals.home !== null).sort((x, y) => y.fixture.timestamp - x.fixture.timestamp).slice(0, 5);
         const prec = sez('Ultimi precedenti', `<div class="prec" style="margin-top:-14px">${h2h.length ? h2h.map(f => `<div><span class="lbl tn">${new Date(f.fixture.date).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: '2-digit' })}</span><span class="sc">${esc(f.teams.home.name)} <b class="tn">${f.goals.home}–${f.goals.away}</b> ${esc(f.teams.away.name)}</span></div>`).join('') : '<div><span class="lbl">Nessun precedente disponibile</span></div>'}</div>`);

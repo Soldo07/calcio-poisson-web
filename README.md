@@ -9,10 +9,11 @@ Funziona nel browser, senza installare nulla, su iPhone, iPad e computer. Da iPh
 ## Cosa mostra
 
 - **Partite del giorno** (ieri, oggi, domani) con orario o minuto di gioco, filtro per i campionati principali e ricerca per squadra.
+- **Verdetto**: in cima alla sintesi, lo spunto di valore (l'esito su cui il modello si discosta di più dal mercato) oppure l'esito più probabile quando le quote non sono ancora caricate.
 - **Sintesi della partita**: probabilità 1X2, doppia chance, Goal e No Goal, Over e Under, gol attesi per squadra.
 - **Punteggi esatti** più probabili, con la quota equa di ciascuno.
 - **Quote a confronto**: la quota equa calcolata dal modello accanto a quella del mercato, per vedere dove le due si discostano.
-- **Squadre**: rendimento in casa e fuori, gol fatti e subiti a partita, infortunati e squalificati di ciascuna squadra.
+- **Squadre**: rendimento in casa e fuori, gol fatti e subiti a partita, infortunati e squalificati di ciascuna squadra, gialli e rossi attesi con tre linee Over sui cartellini.
 - **Confronto con la previsione di API-Football**, quando il servizio la fornisce.
 - **Sezione Dati**: quante richieste sono state usate oggi, quante restano e quanto vale la memoria locale.
 
@@ -23,8 +24,8 @@ Campionati nel filtro principale: Serie A, Premier League, La Liga, Bundesliga, 
 1. Per ogni squadra si calcola la forza in attacco e in difesa rispetto alla media del campionato, separando le gare in casa da quelle in trasferta. Se la media del campionato non è disponibile, si usano valori tipici.
 2. Le forze vengono avvicinate alla media quando le partite giocate sono poche (fattore di regressione K = 5), così un campione piccolo non produce stime estreme.
 3. Da queste si ricavano i gol attesi di ciascuna squadra.
-4. Si costruisce una matrice di probabilità da 0 a 10 gol per squadra, con distribuzioni di Poisson indipendenti.
-5. Dalla matrice si ottengono tutti i mercati: 1X2, doppia chance, Goal, Over e Under, punteggi esatti.
+4. Si costruisce una matrice di probabilità da 0 a 10 gol per squadra, con distribuzioni di Poisson e la correzione di Dixon-Coles sui punteggi bassi (0-0, 1-0, 0-1, 1-1), che il Poisson puro tende a sottostimare nei pareggi.
+5. Dalla matrice si ottengono tutti i mercati: 1X2, doppia chance, Goal e No Goal, Over e Under, punteggi esatti.
 
 La quota equa è 1 diviso la probabilità. Non include il margine del bookmaker, quindi non è confrontabile alla pari con una quota reale: serve a vedere la differenza, non a prevedere un esito.
 
