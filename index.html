@@ -514,6 +514,7 @@
                         <span class="lbl" id="datiCacheUsi"></span>
                         <button type="button" class="btn sec" id="btnSvuota"></button>
                     </section>
+                    <span class="lbl" id="datiVersione" style="text-align:center"></span>
                 </div>
             </section>
         </div>
@@ -575,6 +576,7 @@
 
     // ---- NBA: API-Basketball, con la stessa chiave di API-Sports ----
     const URL_BASE_NBA = 'https://v1.basketball.api-sports.io';
+    const VERSIONE = 'NBA r2 · 14/11/2026';   // visibile in Dati: serve a capire se il telefono ha la pagina aggiornata
     const CHIAVE_SPORT = 'cp_sport_v1';
     const NBA_LEGA_ID = 12;
     const NBA_MEDIA_TIPICA = 115.0;   // punti a squadra a partita, usati solo se la classifica non è accessibile
@@ -905,6 +907,7 @@
             stato.erroreLista = err.message; stato.caricata = true;
             $('sottoTitolo').textContent = 'Non aggiornato';
             $('lista').innerHTML = `<div class="vuoto-lista"><div class="avviso err" style="text-align:left;width:100%">${ic('info', 20)}<span><b class="b">Errore chiamata API.</b> ${esc(err.message)}</span></div>
+                <span class="lbl" style="word-break:break-all;text-align:left;width:100%">Richiesta: ${esc(percPartite(dataStr).replace('@nba/', 'basketball/').replace(/^(?!basketball)/, 'football'))}<br>Versione: ${esc(VERSIONE)}</span>
                 <button type="button" class="btn sec" style="width:auto" id="btnRiprova">${ic('refresh', 18)}Riprova</button></div>`;
             $('btnRiprova').onclick = () => caricaPartite(dataStr);
         }
@@ -2117,7 +2120,7 @@
         // sport di partenza: quello della rotta aperta, altrimenti l'ultimo usato
         stato.sport = /^#\/n\/\d+/.test(location.hash) ? 'nba' : /^#\/p\/\d+/.test(location.hash) ? 'calcio' : (store.get(CHIAVE_SPORT) === 'nba' ? 'nba' : 'calcio');
         stato.filtroLega = stato.sport === 'nba' ? 'tutte' : 'principali';
-        renderSport(); etichetteTab();
+        renderSport(); etichetteTab(); $('datiVersione').textContent = 'Versione ' + VERSIONE;
         // icone dei pulsanti
         $('icoLogo').innerHTML = ic('logo', 20);
         $('btnCerca').innerHTML = ic('search', 20); $('btnCercaWide').innerHTML = ic('search', 20);
