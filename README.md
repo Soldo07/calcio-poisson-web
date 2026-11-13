@@ -1,6 +1,6 @@
 # Calcio Poisson
 
-Dashboard personale per analizzare le partite di calcio con un modello statistico di Poisson. Mostra le partite del giorno, stima le probabilità di ogni esito e le confronta con le quote del mercato.
+Dashboard personale per analizzare le partite di calcio (modello di Poisson) e dell'NBA (modello normale). Mostra le partite del giorno, stima le probabilità di ogni esito e le confronta con le quote del mercato.
 
 **Apri la pagina:** https://soldo07.github.io/calcio-poisson-web/
 
@@ -29,6 +29,29 @@ Campionati nel filtro principale: Serie A, Premier League, La Liga, Bundesliga, 
 
 La quota equa è 1 diviso la probabilità. Non include il margine del bookmaker, quindi non è confrontabile alla pari con una quota reale: serve a vedere la differenza, non a prevedere un esito.
 
+## NBA
+
+Nella lista delle partite il selettore **Calcio / NBA** cambia sport. Il link di ogni partita ricorda lo sport, quindi un collegamento a una gara NBA si apre direttamente sull'NBA.
+
+- **Partite**: solo la NBA (lega 12 di API-Basketball), con quarto di gioco (Q1–Q4, supplementari) e risultato.
+- **Sintesi**: probabilità di vittoria, punti attesi per squadra, margine atteso, handicap e totale punti su tre linee ciascuno, con la quota equa.
+- **Quote**: vincente, handicap e totale punti letti dai bookmaker. Per ogni mercato si usa la linea condivisa dal maggior numero di bookmaker e più equilibrata, e si confronta la quota equa del modello con la probabilità del mercato senza margine.
+- **Punti**: probabilità del margine di vittoria per fasce (1–7, 8–14, 15 o più) e del totale punti.
+- **Squadre**: punti fatti e subiti, differenza punti, record in casa e fuori, posizione in classifica.
+
+Come funziona il modello NBA:
+
+1. Punti attesi di una squadra = media di lega × attacco × difesa dell'avversario, con attacco e difesa regressi verso la media quando le partite giocate sono poche (K = 8) e un mix tra rendimento in casa e fuori (K = 10).
+2. Al margine si aggiungono 2,5 punti di fattore campo.
+3. Margine e totale punti seguono una distribuzione normale (scarto tipico 12 per il margine, 18 per il totale), con correzione di continuità: nell'NBA non esistono pareggi.
+4. Sulle linee intere la parità sulla linea (rimborso) è esclusa dal calcolo.
+
+Limiti da conoscere:
+
+- **Infortuni, riposo e partite ravvicinate non sono disponibili**: nell'NBA un'assenza pesante sposta il margine di diversi punti. Controllali prima di dare peso al modello.
+- Il piano gratuito di API-Sports ha 100 richieste al giorno per ogni sport (il contatore è separato) e serve solo le date da ieri a domani. Può rifiutare le statistiche della stagione in corso: in quel caso l'app lo dice con un messaggio esplicito.
+- Una chiave API-Sports vale per calcio e NBA.
+
 ## Pensata per l'uso da telefono
 
 - Navigazione con cronologia: il gesto o il tasto Indietro riporta alla lista.
@@ -41,6 +64,6 @@ La quota equa è 1 diviso la probabilità. Non include il margine del bookmaker,
 
 - Strumento a scopo informativo e di studio: le probabilità sono stime statistiche e non garantiscono alcun risultato. Non è un consiglio di scommessa.
 - Il modello non conosce formazioni, squalifiche, motivazioni o condizioni di forma: tratta ogni partita come indipendente dalle altre.
-- Dati sulle partite, quote e classifiche forniti da [API-Football](https://www.api-football.com/).
+- Dati sulle partite, quote e classifiche forniti da [API-Football](https://www.api-football.com/) (calcio) e API-Basketball (NBA), entrambe di API-Sports.
 - La pagina è un singolo file HTML, senza servizi di tracciamento. I font sono caricati da Google Fonts.
 - Progetto personale di Diego Soldo. Il codice sorgente è conservato in un repository privato.

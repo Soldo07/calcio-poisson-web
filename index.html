@@ -97,6 +97,9 @@
         .chip small { font-size: 14px; font-weight: 500; color: var(--ink3); }
         .chip[aria-pressed=true] { color: var(--ink); border-bottom-color: var(--acc); }
         .chip.altre { color: var(--ink2); gap: 4px; }
+        .chips[hidden] { display: none; }
+        .chips.sport { padding: 0 4px; }
+        .chips.sport .chip { min-height: 44px; }
         .cerca { display: none; padding: 8px 16px 0; }
         body.cerca-on .cerca { display: block; }
         .avviso[hidden] { display: none; }
@@ -201,6 +204,7 @@
         .v3 .nm b { color: var(--ink); }
         .v3 .pc { font-size: 48px; line-height: .95; }
         .v3 .pc small { font-size: .5em; }
+        .v2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .seg { display: flex; gap: 2px; border-radius: 6px; overflow: hidden; }
         .seg div { height: 20px; }
         .ticks { position: relative; height: 26px; margin-top: 2px; }
@@ -433,6 +437,7 @@
                 </div>
             </header>
             <div class="sticky-lista">
+                <div class="chips sport" id="sport" role="group" aria-label="Sport"></div>
                 <div class="giorno-testa"><span class="data" id="dataGiorno"></span><button type="button" class="btn-oggi" id="btnOggi" hidden>Vai a oggi</button></div>
                 <div class="giorni" id="giorni" role="group" aria-label="Giorno"></div>
                 <div class="cerca"><input type="search" id="inputCerca" placeholder="Cerca squadra o campionato" aria-label="Cerca squadra o campionato" autocomplete="off"></div>
@@ -488,7 +493,7 @@
                 <header class="tit"><div><h1>Dati</h1><div class="lbl" id="datiPiano">Piano gratuito</div></div></header>
                 <div class="cont" style="display:flex;flex-direction:column;gap:28px;padding-top:16px;max-width:760px">
                     <section class="sez">
-                        <div class="sez-h"><h2>Chiamate di oggi</h2></div>
+                        <div class="sez-h"><h2 id="datiTitoloChiamate">Chiamate di oggi</h2></div>
                         <div class="dati-n"><span class="num" id="datiUsate">0</span><span class="num" id="datiLimite">/ 100</span></div>
                         <div class="dati-b"><div id="datiBarra" style="width:0%"></div></div>
                         <span class="lbl" id="datiRimaste" style="font-size:15px;color:var(--ink2)"></span>
@@ -496,7 +501,7 @@
                     <section class="sez">
                         <div class="sez-h"><h2>Chiave API</h2></div>
                         <p style="font-size:15px;line-height:1.5;color:var(--ink2)" id="chiaveStato"></p>
-                        <label class="lbl" for="inputChiave">Nuova chiave di API-Football</label>
+                        <label class="lbl" for="inputChiave">Nuova chiave di API-Sports (vale per calcio e NBA)</label>
                         <input class="campo" id="inputChiave" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Incolla la chiave">
                         <button type="button" class="btn" id="btnSalvaChiave">Salva la chiave</button>
                         <button type="button" class="btn sec" id="btnRimuoviChiave">Rimuovi la chiave da questo dispositivo</button>
@@ -568,9 +573,21 @@
     const TAB = ['sintesi', 'quote', 'punteggi', 'squadre'];
     const TAB_NOME = { sintesi: 'Sintesi', quote: 'Quote', punteggi: 'Punteggi', squadre: 'Squadre' };
 
+    // ---- NBA: API-Basketball, con la stessa chiave di API-Sports ----
+    const URL_BASE_NBA = 'https://v1.basketball.api-sports.io';
+    const CHIAVE_SPORT = 'cp_sport_v1';
+    const NBA_LEGA_ID = 12;
+    const NBA_MEDIA_TIPICA = 115.0;   // punti a squadra a partita, usati solo se la classifica non è accessibile
+    const NBA_VANTAGGIO_CASA = 2.5;   // fattore campo in punti di margine: valore tipico
+    const NBA_K_SHRINK = 8;           // partite "virtuali" di regressione verso la media
+    const NBA_K_SEDE = 10;            // partite "virtuali" per pesare i dati in casa o fuori contro il totale
+    const NBA_SD_MARGINE = 12;        // deviazione standard del margine: valore tipico, non stimato sui nostri dati
+    const NBA_SD_TOTALE = 18;         // deviazione standard dei punti totali: valore tipico, non stimato sui nostri dati
+    const NBA_VALORE_SCARTO_MIN = 6;  // più alta del calcio: il modello non vede infortuni e riposo
+
     // ===================== STATO =====================
     const stato = {
-        dataSelezionata: null, partiteGiorno: [], caricata: false, filtroLega: 'principali', cerca: '',
+        sport: 'calcio', filtroCalcio: 'principali', dataSelezionata: null, partiteGiorno: [], caricata: false, filtroLega: 'principali', cerca: '',
         collassate: new Set(), partita: null, analisi: null, quote: null, tab: 'sintesi', calcolando: false,
         cacheAnalisi: new Map(), cacheQuote: new Map(), aggiornato: null, rottaPendente: null, scrollLista: 0, errore: null, erroreLista: null
     };
@@ -612,18 +629,20 @@
     }
 
     // ===================== CONTATORE CHIAMATE =====================
-    function leggiContatore() {
+    const chiaveContatore = sp => sp === 'nba' ? CHIAVE_CONTATORE + '_nba' : CHIAVE_CONTATORE;
+    function leggiContatore(sp = stato.sport) {
         const oggi = dataLocaleISO(new Date());
         let c = null;
-        try { c = JSON.parse(store.get(CHIAVE_CONTATORE) || 'null'); } catch (e) {}
+        try { c = JSON.parse(store.get(chiaveContatore(sp)) || 'null'); } catch (e) {}
         if (!c || c.data !== oggi) c = { data: oggi, chiamate: 0, cache: 0, rimanenti: null };
         return c;
     }
-    function salvaContatore(c) { store.set(CHIAVE_CONTATORE, JSON.stringify(c)); aggiornaBadge(c); }
+    function salvaContatore(c, sp = stato.sport) { store.set(chiaveContatore(sp), JSON.stringify(c)); if (sp === stato.sport) aggiornaBadge(c); }
     function aggiornaBadge(c) {
         c = c || leggiContatore();
         const usate = c.rimanenti !== null ? (LIMITE_GIORNALIERO - c.rimanenti) : c.chiamate;
-        $('statoWide').textContent = `Chiamate ${usate}/${LIMITE_GIORNALIERO}`;
+        $('statoWide').textContent = `${stato.sport === 'nba' ? 'NBA, chiamate' : 'Chiamate'} ${usate}/${LIMITE_GIORNALIERO}`;
+        $('datiTitoloChiamate').textContent = `Chiamate di oggi, ${nomeSport(stato.sport)}`;
         $('datiUsate').textContent = usate;
         $('datiLimite').textContent = `/ ${LIMITE_GIORNALIERO}`;
         $('datiBarra').style.width = `${clamp(usate / LIMITE_GIORNALIERO * 100, 0, 100)}%`;
@@ -647,7 +666,9 @@
         if (!store.set(chiaveCache(url), v)) { svuotaCache(); store.set(chiaveCache(url), v); }
     }
     function svuotaCache() { store.keys().filter(k => k.startsWith(PREFISSO_CACHE)).forEach(k => store.del(k)); }
-    const urlApi = percorso => URL_BASE + percorso;
+    // i percorsi dell'NBA iniziano con @nba e vanno all'host di API-Basketball
+    const sportDiPercorso = p => p.startsWith('@nba') ? 'nba' : 'calcio';
+    const urlApi = percorso => percorso.startsWith('@nba') ? URL_BASE_NBA + percorso.slice(4) : URL_BASE + percorso;
     const inCache = (percorso, ttl) => !!leggiCache(urlApi(percorso), ttl);
 
     // ===================== API =====================
@@ -657,6 +678,12 @@
         classifica: (lega, stagione) => `/standings?league=${lega}&season=${stagione}`,
         infortuni: id => `/injuries?fixture=${id}`,
         quote: id => `/odds?fixture=${id}`
+    };
+    const apiN = {
+        partite: d => `@nba/games?date=${d}&league=${NBA_LEGA_ID}&timezone=Europe/Rome`,
+        statistiche: (squadra, stagione) => `@nba/statistics?league=${NBA_LEGA_ID}&season=${stagione}&team=${squadra}`,
+        classifica: stagione => `@nba/standings?league=${NBA_LEGA_ID}&season=${stagione}`,
+        quote: id => `@nba/odds?game=${id}`
     };
 
     function estraiErrori(errors) {
@@ -671,9 +698,10 @@
 
     async function chiamaApi(percorso, ttl, opzioni = {}) {
         const url = urlApi(percorso);
+        const sp = sportDiPercorso(percorso);
         const cached = leggiCache(url, ttl);
         if (cached) {
-            const cont = leggiContatore(); cont.cache++; salvaContatore(cont);
+            const cont = leggiContatore(sp); cont.cache++; salvaContatore(cont, sp);
             if (cached.errore) throw new Error(cached.errore);
             return cached.d;
         }
@@ -684,11 +712,11 @@
         catch (e) { throw new Error('Rete non raggiungibile o richiesta bloccata dal browser.'); }
 
         // riletto dopo l'await: le chiamate parallele non si sovrascrivono a vicenda
-        const cont = leggiContatore();
+        const cont = leggiContatore(sp);
         cont.chiamate++;
         const rim = r.headers.get('x-ratelimit-requests-remaining');
         if (rim !== null && rim !== '') cont.rimanenti = parseInt(rim, 10);
-        salvaContatore(cont);
+        salvaContatore(cont, sp);
 
         if (r.status === 401 || r.status === 403) throw new Error(`Chiave API rifiutata (HTTP ${r.status}). Controllala nella sezione Dati.`);
         if (r.status === 429) throw new Error('Limite di richieste raggiunto (HTTP 429). Riprova più tardi.');
@@ -716,7 +744,7 @@
     // Aggiorna solo la lista del giorno (una chiamata), senza toccare il resto della cache
     function aggiornaPartite() {
         if (!stato.dataSelezionata) return;
-        store.del(chiaveCache(urlApi(api.partite(stato.dataSelezionata))));
+        store.del(chiaveCache(urlApi(percPartite(stato.dataSelezionata))));
         caricaPartite(stato.dataSelezionata);
     }
 
@@ -737,15 +765,17 @@
     }
     function applicaRotta() {
         const h = location.hash || '#/';
-        let m = /^#\/p\/(\d+)(?:\/(\w+))?$/.exec(h);
+        let m = /^#\/([pn])\/(\d+)(?:\/(\w+))?$/.exec(h);
         if (m) {
-            const p = stato.partiteGiorno.find(x => String(x.fixture.id) === m[1]);
+            const spRotta = m[1] === 'n' ? 'nba' : 'calcio';
+            if (spRotta !== stato.sport) { cambiaSport(spRotta, h); return; }   // indietro/avanti del browser tra uno sport e l'altro
+            const p = stato.partiteGiorno.find(x => String(x.fixture.id) === m[2]);
             if (!p) {
                 if (!stato.caricata) { stato.rottaPendente = h; return; }
                 history.replaceState(null, '', '#/'); impostaVista('partite'); return;
             }
             if (!stato.partita || stato.partita.fixture.id !== p.fixture.id) selezionaPartita(p);
-            stato.tab = TAB.includes(m[2]) ? m[2] : 'sintesi';
+            stato.tab = TAB.includes(m[3]) ? m[3] : 'sintesi';
             applicaTab();
             impostaVista('analisi');
             return;
@@ -758,7 +788,7 @@
         const cur = v === 'analisi' ? 'analisi' : v === 'dati' ? 'dati' : 'partite';
         document.querySelectorAll('#bnav a').forEach(a => { if (a.dataset.n === cur) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
         const w = $('btnDatiWide'); if (cur === 'dati') w.setAttribute('aria-current', 'page'); else w.removeAttribute('aria-current');
-        $('nvAnalisi').setAttribute('href', stato.partita ? `#/p/${stato.partita.fixture.id}` : '#/');
+        $('nvAnalisi').setAttribute('href', stato.partita ? rotta(stato.partita.fixture.id) : '#/');
     }
 
     // ===================== STEMMI E COMPONENTI =====================
@@ -778,8 +808,8 @@
     }
     const roundIt = r => { const m = /(\d+)\s*$/.exec(r || ''); return m ? `giornata ${m[1]}` : (r || ''); };
     const metaLega = m => `${m.league.name}${m.league.round ? ', ' + roundIt(m.league.round) : ''}`;
-    const STATI_LIVE = ['1H', '2H', 'HT', 'ET', 'BT', 'P', 'SUSP', 'INT', 'LIVE'];
-    const STATI_FINE = ['FT', 'AET', 'PEN'];
+    const STATI_LIVE = ['1H', '2H', 'HT', 'ET', 'BT', 'P', 'SUSP', 'INT', 'LIVE', 'Q1', 'Q2', 'Q3', 'Q4', 'OT'];
+    const STATI_FINE = ['FT', 'AET', 'PEN', 'AOT'];
 
     // ===================== CALENDARIO, FILTRI, LISTA =====================
     function inizializzaCalendario() {
@@ -809,8 +839,8 @@
     function mostraSetupChiave() {
         $('sottoTitolo').textContent = 'Chiave mancante';
         $('lista').innerHTML = `<div class="setup"><section class="sez"><div class="sez-h"><h2>Collega la tua chiave API</h2></div>
-            <p style="font-size:16px;line-height:1.5;color:var(--ink2)">Per leggere partite e quote serve la tua chiave di API-Football. La inserisci una volta sola: resta su questo dispositivo e non è scritta nel file né su GitHub.</p>
-            <label class="lbl" for="inputChiaveLista">Chiave di API-Football</label>
+            <p style="font-size:16px;line-height:1.5;color:var(--ink2)">Per leggere partite e quote serve la tua chiave di API-Sports, la stessa per calcio e NBA. La inserisci una volta sola: resta su questo dispositivo e non è scritta nel file né su GitHub.</p>
+            <label class="lbl" for="inputChiaveLista">Chiave di API-Sports</label>
             <input class="campo" id="inputChiaveLista" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Incolla la chiave">
             <div class="avviso err" id="erroreChiave" role="alert" hidden></div>
             <button type="button" class="btn" id="btnSalvaChiaveLista">Salva e carica le partite</button>
@@ -848,6 +878,7 @@
     }
 
     async function caricaPartite(dataStr) {
+        const sp = stato.sport;
         stato.dataSelezionata = dataStr; stato.caricata = false; stato.erroreLista = null;
         aggiornaGiorno();
         if (!chiaveApi()) { mostraSetupChiave(); return; }
@@ -855,10 +886,11 @@
         $('lista').innerHTML = '<div class="caricamento" aria-label="Caricamento delle partite"><div class="scheletro"></div><div class="scheletro"></div><div class="scheletro"></div></div>';
         try {
             const ttl = dataStr === dataLocaleISO(new Date()) ? TTL.partiteOggi : TTL.partite;
-            const data = await chiamaApi(api.partite(dataStr), ttl);
-            if (stato.dataSelezionata !== dataStr) return;   // nel frattempo l'utente ha cambiato giorno
-            stato.partiteGiorno = data.response || [];
-            const c = leggiCache(urlApi(api.partite(dataStr)), ttl);
+            const perc = percPartite(dataStr);
+            const data = await chiamaApi(perc, ttl);
+            if (stato.dataSelezionata !== dataStr || stato.sport !== sp) return;   // nel frattempo l'utente ha cambiato giorno o sport
+            stato.partiteGiorno = sp === 'nba' ? (data.response || []).map(normalizzaPartitaNba).filter(Boolean) : (data.response || []);
+            const c = leggiCache(urlApi(perc), ttl);
             stato.aggiornato = c ? c.t : Date.now();
             stato.caricata = true;
             $('sottoTitolo').textContent = `Aggiornato ${oraLocale(new Date(stato.aggiornato).toISOString())}`;
@@ -868,7 +900,7 @@
             if (stato.rottaPendente) { const h = stato.rottaPendente; stato.rottaPendente = null; if (location.hash === h) applicaRotta(); }
             else if (stato.partita && !stato.partiteGiorno.some(m => m.fixture.id === stato.partita.fixture.id) && document.body.dataset.vista === 'partite') { /* resta in lista */ }
         } catch (err) {
-            if (stato.dataSelezionata !== dataStr) return;
+            if (stato.dataSelezionata !== dataStr || stato.sport !== sp) return;
             stato.erroreLista = err.message; stato.caricata = true;
             $('sottoTitolo').textContent = 'Non aggiornato';
             $('lista').innerHTML = `<div class="vuoto-lista"><div class="avviso err" style="text-align:left;width:100%">${ic('info', 20)}<span><b class="b">Errore chiamata API.</b> ${esc(err.message)}</span></div>
@@ -925,7 +957,7 @@
 
     function tempoRiga(m) {
         const s = m.fixture.status.short;
-        if (STATI_LIVE.includes(s)) return `<span class="live"><span class="dot"></span><span class="num">${s === 'HT' ? 'INT' : (m.fixture.status.elapsed || '') + '′'}</span></span>`;
+        if (STATI_LIVE.includes(s)) return `<span class="live"><span class="dot"></span><span class="num">${s === 'HT' ? 'INT' : m.sport === 'nba' ? (s === 'BT' ? 'INT' : s) : (m.fixture.status.elapsed || '') + '′'}</span></span>`;
         if (STATI_FINE.includes(s)) return '<span class="fin">Finale</span>';
         if (s === 'NS' || s === 'TBD') return `<span class="num">${oraLocale(m.fixture.date)}</span>`;
         return `<span class="fin">${esc(s)}</span>`;
@@ -951,9 +983,9 @@
             return `<section class="lega"><button type="button" class="lega-h" data-lega="${lega.id}" aria-expanded="${aperta}"><span class="n">${esc(lega.name)}</span><span class="p">${esc(lega.country)}</span>${ic('down', 20)}</button>
                 <div class="righe"${aperta ? '' : ' hidden'}>${righe.map(m => {
                     const live = STATI_LIVE.includes(m.fixture.status.short);
-                    const pronta = stato.cacheAnalisi.has(m.fixture.id);
-                    return `<div class="riga-wrap"><a class="riga-az" href="#/p/${m.fixture.id}" data-id="${m.fixture.id}" tabindex="-1" aria-hidden="true">${ic('logo', 24)}Analizza</a>
-                        <a class="riga${m.fixture.id === selId ? ' sel' : ''}" href="#/p/${m.fixture.id}" data-id="${m.fixture.id}" aria-label="${esc(m.teams.home.name)} contro ${esc(m.teams.away.name)}">
+                    const pronta = stato.cacheAnalisi.has(kAn(m));
+                    return `<div class="riga-wrap"><a class="riga-az" href="${rotta(m.fixture.id)}" data-id="${m.fixture.id}" tabindex="-1" aria-hidden="true">${ic('logo', 24)}Analizza</a>
+                        <a class="riga${m.fixture.id === selId ? ' sel' : ''}" href="${rotta(m.fixture.id)}" data-id="${m.fixture.id}" aria-label="${esc(m.teams.home.name)} contro ${esc(m.teams.away.name)}">
                             <div class="t">${tempoRiga(m)}</div>
                             <div class="sq">${sq(m.teams.home, m.goals.home, live)}${sq(m.teams.away, m.goals.away, live)}${pronta ? `<span class="pronta">${ic('check', 14)}Analisi pronta</span>` : ''}</div>
                             ${ic('right', 20).replace('class="ico"', 'class="ico chv"')}
@@ -1008,7 +1040,7 @@
             e.preventDefault();
             if (Date.now() - blocca < 350) return;
             if (a.classList.contains('aperta')) { a.classList.remove('aperta'); a.style.transform = ''; return; }
-            vaiA(`#/p/${a.dataset.id}`);
+            vaiA(rotta(a.dataset.id));
         });
     })();
 
@@ -1034,6 +1066,13 @@
     // ===================== SELEZIONE PARTITA E ANALISI =====================
     function stimaChiamateAnalisi(m) {
         let n = 0;
+        if (m.sport === 'nba') {
+            const stag = m.league.season;
+            if (!inCache(apiN.statistiche(m.teams.home.id, stag), TTL.previsioni)) n++;
+            if (!inCache(apiN.statistiche(m.teams.away.id, stag), TTL.previsioni)) n++;
+            if (!inCache(apiN.classifica(stag), TTL.classifica)) n++;
+            return n;
+        }
         if (!inCache(api.previsioni(m.fixture.id), TTL.previsioni)) n++;
         if (!inCache(api.classifica(m.league.id, m.league.season), TTL.classifica)) n++;
         if (!inCache(api.infortuni(m.fixture.id), TTL.infortuni)) n++;
@@ -1043,8 +1082,8 @@
 
     function selezionaPartita(m, forza) {
         stato.partita = m;
-        stato.analisi = forza ? null : (stato.cacheAnalisi.get(m.fixture.id) || null);
-        stato.quote = forza ? null : (stato.cacheQuote.get(m.fixture.id) || null);
+        stato.analisi = forza ? null : (stato.cacheAnalisi.get(kAn(m)) || null);
+        stato.quote = forza ? null : (stato.cacheQuote.get(kAn(m)) || null);
         stato.errore = null; stato.calcolando = false;
         document.querySelectorAll('#lista .riga').forEach(r => r.classList.toggle('sel', r.dataset.id === String(m.fixture.id)));
         renderTopAnalisi();
@@ -1062,7 +1101,7 @@
         const lista = partiteFiltrate();
         const i = lista.findIndex(x => x.fixture.id === m.fixture.id);
         $('anPos').textContent = i >= 0 ? `${i + 1}/${lista.length}` : '';
-        const dis = (el, off, id) => { el.setAttribute('aria-disabled', off ? 'true' : 'false'); el.setAttribute('href', off || id === null ? '#/' : `#/p/${id}`); };
+        const dis = (el, off, id) => { el.setAttribute('aria-disabled', off ? 'true' : 'false'); el.setAttribute('href', off || id === null ? '#/' : rotta(id)); };
         dis($('btnPrec'), i <= 0, i > 0 ? lista[i - 1].fixture.id : null);
         dis($('btnSucc'), i < 0 || i >= lista.length - 1, i >= 0 && i < lista.length - 1 ? lista[i + 1].fixture.id : null);
     }
@@ -1072,7 +1111,9 @@
         const a = stato.analisi;
         const s = m.fixture.status.short;
         const giocata = STATI_LIVE.includes(s) || STATI_FINE.includes(s);
+        const nba = m.sport === 'nba';
         const info = (st, id) => {
+            if (nba) return st ? `<span class="lbl">${st.v.tot}V ${st.p.tot}P</span>` : '';
             const e = a && a.classifica && a.classifica.perTeam[id];
             const p = [];
             if (e) p.push(`${e.rank}° posto, ${e.points} pt`);
@@ -1080,13 +1121,13 @@
             return p.length ? `<span class="lbl">${p.join(', ')}</span>` : '';
         };
         const centro = giocata
-            ? `<span class="num"${STATI_LIVE.includes(s) ? ' style="color:var(--live)"' : ''}>${m.goals.home ?? '-'} – ${m.goals.away ?? '-'}</span><span class="lbl">${esc(STATI_LIVE.includes(s) ? (s === 'HT' ? 'Intervallo' : (m.fixture.status.elapsed || '') + '′') : 'Finale')}</span>`
+            ? `<span class="num"${STATI_LIVE.includes(s) ? ' style="color:var(--live)"' : ''}>${m.goals.home ?? '-'} – ${m.goals.away ?? '-'}</span><span class="lbl">${esc(STATI_LIVE.includes(s) ? (s === 'HT' ? 'Intervallo' : nba ? s : (m.fixture.status.elapsed || '') + '′') : 'Finale')}</span>`
             : `<span class="num">${oraLocale(m.fixture.date)}</span><span class="lbl">${new Date(m.fixture.date).toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'long' })}</span>`;
         $('hdrMatch').innerHTML = `<span class="lbl">${esc(metaLega(m))}</span>
             <div class="hdr-g">
-                <div class="hdr-l">${stemma(m.teams.home, true, 'var(--casa)')}<span class="nome">${esc(m.teams.home.name)}</span>${info(a && a.statCasa, m.teams.home.id)}${a ? formaHtml(a.statCasa.form) : ''}</div>
+                <div class="hdr-l">${stemma(m.teams.home, true, 'var(--casa)')}<span class="nome">${esc(m.teams.home.name)}</span>${info(a && a.statCasa, m.teams.home.id)}${a ? formaHtml(nba ? formaNba(a, m.teams.home.id) : a.statCasa.form) : ''}</div>
                 <div class="hdr-c">${centro}</div>
-                <div class="hdr-l dx">${stemma(m.teams.away, true, 'var(--osp)')}<span class="nome">${esc(m.teams.away.name)}</span>${info(a && a.statOspite, m.teams.away.id)}${a ? formaHtml(a.statOspite.form) : ''}</div>
+                <div class="hdr-l dx">${stemma(m.teams.away, true, 'var(--osp)')}<span class="nome">${esc(m.teams.away.name)}</span>${info(a && a.statOspite, m.teams.away.id)}${a ? formaHtml(nba ? formaNba(a, m.teams.away.id) : a.statOspite.form) : ''}</div>
             </div>`;
     }
 
@@ -1099,8 +1140,8 @@
         const n = stimaChiamateAnalisi(m);
         box.innerHTML = `<div class="corpo-an" style="max-width:640px">
             <section class="sez"><div class="sez-h"><h2>Cosa ottieni</h2></div>
-                <div class="vantaggi"><div>${ic('check', 20)}Verdetto, probabilità 1X2 e mercati gol</div><div>${ic('check', 20)}Gol attesi e risultati esatti</div><div>${ic('check', 20)}Confronto tra le squadre e assenze</div></div>
-                <p style="font-size:15px;line-height:1.5;color:var(--ink2)">Servono 3 chiamate: previsioni, classifica e infortuni. Poi i dati restano in cache per 6 ore. Le quote si aggiungono dopo, con una chiamata.</p>
+                <div class="vantaggi">${(m.sport === 'nba' ? ['Verdetto e probabilità di vittoria', 'Punti attesi, margine e totale punti', 'Confronto tra le squadre'] : ['Verdetto, probabilità 1X2 e mercati gol', 'Gol attesi e risultati esatti', 'Confronto tra le squadre e assenze']).map(t => `<div>${ic('check', 20)}${t}</div>`).join('')}</div>
+                <p style="font-size:15px;line-height:1.5;color:var(--ink2)">${m.sport === 'nba' ? 'Servono 3 chiamate: statistiche delle due squadre e classifica.' : 'Servono 3 chiamate: previsioni, classifica e infortuni.'} Poi i dati restano in cache per 6 ore. Le quote si aggiungono dopo, con una chiamata.</p>
             </section>
             ${stato.errore ? `<div class="avviso err" role="alert">${ic('info', 20)}<span>${esc(stato.errore)}</span></div>` : ''}
             <div class="cta"><button type="button" class="btn" id="btnAnalizza"${stato.calcolando ? ' disabled' : ''}>${stato.calcolando ? '<span class="spin"></span>Calcolo in corso' : 'Calcola il modello'}</button>
@@ -1113,6 +1154,7 @@
         if (!m || stato.calcolando) return;
         stato.calcolando = true; stato.errore = null;
         renderStatoAnalisi();
+        if (m.sport === 'nba') return analizzaPartitaNba(m);
 
         const [rPrev, rClass, rInf] = await Promise.allSettled([
             chiamaApi(api.previsioni(m.fixture.id), TTL.previsioni),
@@ -1138,7 +1180,7 @@
         const infortuni = rInf.status === 'fulfilled' ? (rInf.value.response || []) : null;
         const modello = calcolaModello(statCasa, statOspite, classifica, m.league.id);
         stato.analisi = { prev, statCasa, statOspite, classifica, infortuni, modello };
-        stato.cacheAnalisi.set(m.fixture.id, stato.analisi);
+        stato.cacheAnalisi.set(kAn(m), stato.analisi);
 
         renderStatoAnalisi();
         renderHeaderMatch();
@@ -1255,7 +1297,8 @@
 
     function renderTutto() {
         const a = stato.analisi; if (!a) return;
-        renderSintesi(a); renderQuote(); renderPunteggi(a); renderSquadre(a);
+        if (a.sport === 'nba') { renderSintesiNba(a); renderQuoteNba(); renderPunteggiNba(a); renderSquadreNba(a); }
+        else { renderSintesi(a); renderQuote(); renderPunteggi(a); renderSquadre(a); }
         applicaTab();
     }
 
@@ -1343,6 +1386,7 @@
     async function caricaQuote() {
         const m = stato.partita, md = stato.analisi && stato.analisi.modello;
         if (!m || !md) return;
+        if (m.sport === 'nba') return caricaQuoteNba();
         const btn = $('btnQuote'); if (btn) { btn.disabled = true; }
         const bv = $('btnQuoteVerdetto'); if (bv) { bv.disabled = true; bv.innerHTML = '<span class="spin"></span>Carico le quote'; }
         try {
@@ -1350,7 +1394,7 @@
             if (!stato.partita || stato.partita.fixture.id !== m.fixture.id) return;
             const q = elaboraQuote(data);
             if (!q) { stato.quote = { errore: 'Nessuna quota disponibile per questa partita (mercato non ancora aperto o partita già giocata).' }; }
-            else { stato.quote = q; stato.cacheQuote.set(m.fixture.id, q); }
+            else { stato.quote = q; stato.cacheQuote.set(kAn(m), q); }
         } catch (e) {
             if (!stato.partita || stato.partita.fixture.id !== m.fixture.id) return;
             stato.quote = { errore: `Quote non disponibili: ${e.message}` };
@@ -1430,7 +1474,7 @@
              <p class="lbl" style="line-height:1.5">Probabilità del mercato: 1/quota, corretta per il margine. È un segnale da verificare, non una certezza: il mercato conosce formazioni, motivazioni e notizie che il modello non vede.</p>
              <button type="button" class="btn sec" id="btnQuote">${ic('refresh', 18)}Aggiorna le quote</button>`,
             `${q.bookmakers} bookmaker${margine}`);
-        $('btnQuote').onclick = () => { store.del(chiaveCache(urlApi(api.quote(stato.partita.fixture.id)))); stato.quote = null; stato.cacheQuote.delete(stato.partita.fixture.id); caricaQuote(); };
+        $('btnQuote').onclick = () => { store.del(chiaveCache(urlApi(api.quote(stato.partita.fixture.id)))); stato.quote = null; stato.cacheQuote.delete(kAn(stato.partita)); caricaQuote(); };
     }
 
     // ----- Punteggi -----
@@ -1559,6 +1603,421 @@
             <tbody>${r.map(x => `<tr><td>${x[0]}</td><td>${x[1]}</td><td>${x[2]}</td></tr>`).join('')}</tbody></table></div></div></details>`;
     }
 
+    // ===================== NBA =====================
+    // Dati da API-Basketball (v1.basketball.api-sports.io), con la stessa chiave di API-Sports.
+    // Il modello non è Poisson: in basket i punti sono molti (circa 115 a squadra), quindi margine e totale
+    // si trattano come variabili normali, con attacco e difesa di ciascuna squadra come nel calcio.
+    const kAn = m => `${m.sport || 'calcio'}:${m.fixture.id}`;
+    const rotta = (id, tab) => `#/${stato.sport === 'nba' ? 'n' : 'p'}/${id}${tab ? '/' + tab : ''}`;
+    const percPartite = d => stato.sport === 'nba' ? apiN.partite(d) : api.partite(d);
+    const nomeSport = sp => sp === 'nba' ? 'NBA' : 'calcio';
+    const breve = nome => String(nome || '').trim().split(/\s+/).slice(-1)[0] || '';
+    const fmtLinea = x => (x > 0 ? '+' : x < 0 ? '−' : '') + it(Math.abs(x), 1);
+    const formaNba = (a, id) => (a.classifica && a.classifica.perTeam[id] && a.classifica.perTeam[id].form) || '';
+    const stagioneNba = iso => { const d = new Date(iso); const inizio = d.getMonth() >= 7 ? d.getFullYear() : d.getFullYear() - 1; return `${inizio}-${inizio + 1}`; };
+    const dentro = (o, ...k) => k.reduce((x, c) => (x === null || x === undefined ? null : x[c]), o);
+
+    // la partita NBA viene portata alla stessa forma di quella di calcio, così lista e rotte restano comuni
+    function normalizzaPartitaNba(g) {
+        if (!g || !g.teams || !g.teams.home || !g.teams.away) return null;
+        if (g.league && g.league.id && Number(g.league.id) !== NBA_LEGA_ID) return null;
+        const tot = v => (v === null || v === undefined ? null : num(v));
+        const ts = g.timestamp || Math.floor(new Date(g.date).getTime() / 1000);
+        return {
+            sport: 'nba',
+            fixture: { id: g.id, date: g.date, timestamp: ts, status: { short: (g.status && g.status.short) || 'NS', elapsed: null } },
+            league: { id: NBA_LEGA_ID, name: 'NBA', country: 'USA', season: (g.league && g.league.season) || stagioneNba(g.date), round: null },
+            teams: { home: { id: g.teams.home.id, name: g.teams.home.name, logo: g.teams.home.logo }, away: { id: g.teams.away.id, name: g.teams.away.name, logo: g.teams.away.logo } },
+            goals: { home: g.scores && g.scores.home ? tot(g.scores.home.total) : null, away: g.scores && g.scores.away ? tot(g.scores.away.total) : null }
+        };
+    }
+
+    // ----- scelta dello sport -----
+    function renderSport() {
+        $('sport').innerHTML = [['calcio', 'Calcio'], ['nba', 'NBA']].map(([v, n]) => `<button type="button" class="chip" data-s="${v}" aria-pressed="${stato.sport === v}">${n}</button>`).join('');
+        $('sport').querySelectorAll('.chip').forEach(b => b.onclick = () => cambiaSport(b.dataset.s));
+        $('chips').hidden = stato.sport === 'nba';
+    }
+    function etichetteTab() {
+        const nba = stato.sport === 'nba';
+        TAB_NOME.punteggi = nba ? 'Punti' : 'Punteggi';
+        const b = document.querySelector('#tabs .tab[data-t="punteggi"]');
+        if (b) b.textContent = TAB_NOME.punteggi;
+    }
+    function cambiaSport(sp, rottaDaApplicare) {
+        if (sp !== 'calcio' && sp !== 'nba') return;
+        if (sp === stato.sport && !rottaDaApplicare) return;
+        if (stato.sport === 'calcio') stato.filtroCalcio = stato.filtroLega;
+        stato.sport = sp;
+        store.set(CHIAVE_SPORT, sp);
+        stato.filtroLega = sp === 'nba' ? 'tutte' : (stato.filtroCalcio || 'principali');
+        stato.partiteGiorno = []; stato.caricata = false; stato.partita = null; stato.analisi = null; stato.quote = null;
+        stato.errore = null; stato.calcolando = false; stato.scrollLista = 0; stato.erroreLista = null;
+        stato.cerca = ''; $('inputCerca').value = '';
+        stato.rottaPendente = rottaDaApplicare || null;
+        renderSport(); etichetteTab(); aggiornaBadge();
+        if (!rottaDaApplicare) vaiA('#/', true); else aggiornaNavigazione();
+        caricaPartite(stato.dataSelezionata || dataLocaleISO(new Date()));
+    }
+
+    // ----- statistiche di squadra e classifica -----
+    function normStatNba(data) {
+        const r = data && (Array.isArray(data.response) ? data.response[0] : data.response);
+        if (!r || !r.games || !r.points) return null;
+        const tri = f => ({ tot: f('all'), casa: f('home'), fuori: f('away') });
+        const n = tri(l => num(dentro(r, 'games', 'played', l)));
+        if (!n.tot) n.tot = n.casa + n.fuori;
+        if (!n.tot) return null;
+        const v = tri(l => num(dentro(r, 'games', 'wins', l, 'total')));
+        const p = tri(l => num(dentro(r, 'games', 'loses', l, 'total')));
+        if (!v.tot) v.tot = v.casa + v.fuori;
+        if (!p.tot) p.tot = p.casa + p.fuori;
+        const punti = blocco => {
+            const out = {};
+            Object.entries({ tot: 'all', casa: 'home', fuori: 'away' }).forEach(([k, l]) => {
+                let x = num(dentro(r, 'points', blocco, 'average', l));
+                if (!x) { const t = num(dentro(r, 'points', blocco, 'total', l)); x = n[k] ? t / n[k] : 0; }
+                out[k] = x;
+            });
+            if (!out.tot && n.casa + n.fuori) out.tot = (out.casa * n.casa + out.fuori * n.fuori) / (n.casa + n.fuori);
+            return out;
+        };
+        const pf = punti('for'), pa = punti('against');
+        if (!pf.tot || !pa.tot) return null;
+        return { n, v, p, pf, pa };
+    }
+
+    function elaboraClassificaNba(data) {
+        const r = data && data.response;
+        if (!Array.isArray(r) || !r.length) return null;
+        const righe = [].concat(...r.map(x => Array.isArray(x) ? x : [x]));
+        let pf = 0, gp = 0;
+        const perTeam = {};
+        righe.forEach(e => {
+            if (!e || !e.team) return;
+            perTeam[e.team.id] = { form: e.form || '', posizione: e.position, gruppo: e.group && e.group.name };
+            pf += num(dentro(e, 'points', 'for')); gp += num(dentro(e, 'games', 'played'));
+        });
+        const media = gp >= 30 && pf > 0 ? pf / gp : null;
+        return { perTeam, muLega: media && media > 90 && media < 140 ? media : null };
+    }
+
+    // ----- modello: punti attesi, margine e totale -----
+    function phi(x) {   // funzione di ripartizione della normale standard (Abramowitz-Stegun 26.2.17)
+        const t = 1 / (1 + 0.2316419 * Math.abs(x));
+        const d = 0.3989423 * Math.exp(-x * x / 2);
+        const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+        return x > 0 ? 1 - p : p;
+    }
+    // P(X > soglia) per un valore intero (margine o punti). Sulle soglie intere il "push" (parità sulla linea) è escluso.
+    function probOltre(mu, sd, T) {
+        if (Number.isInteger(T)) { const w = 1 - phi((T + 0.5 - mu) / sd), l = phi((T - 0.5 - mu) / sd); return w / (w + l); }
+        return 1 - phi((T - mu) / sd);
+    }
+
+    function calcolaModelloNba(sh, sa, classifica) {
+        const muReale = !!(classifica && classifica.muLega);
+        const muL = muReale ? classifica.muLega : NBA_MEDIA_TIPICA;
+        const muC = muL + NBA_VANTAGGIO_CASA / 2, muO = muL - NBA_VANTAGGIO_CASA / 2;
+        // media di sede mescolata con la media totale quando le gare in sede sono poche
+        const mix = (sede, totale, n) => { const w = n / (n + NBA_K_SEDE); return w * sede + (1 - w) * totale; };
+        // forza relativa alla media del campionato, regredita verso 1 con poche partite
+        const shrink = (x, n) => 1 + (x - 1) * (n / (n + NBA_K_SHRINK));
+        const offC = shrink(mix(sh.pf.casa / muC, sh.pf.tot / muL, sh.n.casa), sh.n.tot);
+        const difC = shrink(mix(sh.pa.casa / muO, sh.pa.tot / muL, sh.n.casa), sh.n.tot);
+        const offO = shrink(mix(sa.pf.fuori / muO, sa.pf.tot / muL, sa.n.fuori), sa.n.tot);
+        const difO = shrink(mix(sa.pa.fuori / muC, sa.pa.tot / muL, sa.n.fuori), sa.n.tot);
+
+        const lamCasa = clamp(muC * offC * difO, 85, 145);
+        const lamOspite = clamp(muO * offO * difC, 85, 145);
+        const margine = lamCasa - lamOspite, totale = lamCasa + lamOspite;
+        const sdM = NBA_SD_MARGINE, sdT = NBA_SD_TOTALE;
+        // niente pareggi: il margine è un intero diverso da zero, quindi si normalizza su "casa vince" e "ospite vince"
+        const pw = 1 - phi((0.5 - margine) / sdM), pl = phi((-0.5 - margine) / sdM);
+        const pCasa = pw / (pw + pl);
+
+        const campione = Math.min(sh.n.tot, sa.n.tot);
+        const affidabilita = campione < 8 ? 'bassa' : campione < 20 ? 'media' : 'buona';
+        return { muReale, muL, muC, muO, offC, difC, offO, difO, lamCasa, lamOspite, margine, totale, sdM, sdT, pCasa, affidabilita, campione };
+    }
+
+    // distribuzione del margine in fasce, normalizzata come pCasa
+    function fasceMargine(md) {
+        const F = [-14.5, -7.5, -0.5, 0.5, 7.5, 14.5].map(s => phi((s - md.margine) / md.sdM));
+        const parti = [1 - F[5], F[5] - F[4], F[4] - F[3], F[2] - F[1], F[1] - F[0], F[0]];
+        const s = parti.reduce((a, b) => a + b, 0);
+        return parti.map(p => p / s);
+    }
+
+    async function analizzaPartitaNba(m) {
+        const stag = m.league.season;
+        const [rH, rA, rC] = await Promise.allSettled([
+            chiamaApi(apiN.statistiche(m.teams.home.id, stag), TTL.previsioni, { ttlErrore: TTL.classificaNonDisponibile }),
+            chiamaApi(apiN.statistiche(m.teams.away.id, stag), TTL.previsioni, { ttlErrore: TTL.classificaNonDisponibile }),
+            chiamaApi(apiN.classifica(stag), TTL.classifica, { ttlErrore: TTL.classificaNonDisponibile })
+        ]);
+        stato.calcolando = false;
+        if (!stato.partita || stato.partita.fixture.id !== m.fixture.id || stato.partita.sport !== 'nba') return;   // l'utente è passato altrove
+
+        const fallita = [rH, rA].find(r => r.status !== 'fulfilled');
+        if (fallita) {
+            const msg = fallita.reason && fallita.reason.message ? fallita.reason.message : String(fallita.reason);
+            return mostraErrore(eErroreDiPiano(msg)
+                ? `Il piano gratuito di API-Sports non dà accesso alle statistiche NBA della stagione ${stag}: «${msg.replace(/[.\s]+$/, '')}». Serve un piano a pagamento o un'altra fonte dati.`
+                : `Statistiche delle squadre non disponibili: ${msg}`);
+        }
+        const sH = normStatNba(rH.value), sA = normStatNba(rA.value);
+        if (!sH || !sA) return mostraErrore('Statistiche stagionali non ancora disponibili per queste squadre (inizio stagione o formato dei dati non riconosciuto).');
+        const classifica = rC.status === 'fulfilled' ? elaboraClassificaNba(rC.value) : null;
+        const modello = calcolaModelloNba(sH, sA, classifica);
+        stato.analisi = { sport: 'nba', statCasa: sH, statOspite: sA, classifica, modello };
+        stato.cacheAnalisi.set(kAn(m), stato.analisi);
+
+        renderStatoAnalisi();
+        renderHeaderMatch();
+        renderTutto();
+        renderPartite();
+        if (inCache(apiN.quote(m.fixture.id), TTL.quote)) caricaQuote();
+    }
+
+    // ----- quote -----
+    const costoQuoteNba = () => inCache(apiN.quote(stato.partita.fixture.id), TTL.quote) ? 'Dati già in cache, nessuna chiamata' : 'Costa 1 chiamata';
+
+    async function caricaQuoteNba() {
+        const m = stato.partita, a = stato.analisi;
+        if (!m || !a) return;
+        const btn = $('btnQuote'); if (btn) btn.disabled = true;
+        const bv = $('btnQuoteVerdetto'); if (bv) { bv.disabled = true; bv.innerHTML = '<span class="spin"></span>Carico le quote'; }
+        try {
+            const data = await chiamaApi(apiN.quote(m.fixture.id), TTL.quote, { ttlErrore: TTL.quote });
+            if (!stato.partita || stato.partita.fixture.id !== m.fixture.id || stato.partita.sport !== 'nba') return;
+            const q = elaboraQuoteNba(data);
+            if (!q) { stato.quote = { errore: 'Nessuna quota disponibile per questa partita (mercato non ancora aperto o partita già giocata).' }; }
+            else { stato.quote = q; stato.cacheQuote.set(kAn(m), q); }
+        } catch (e) {
+            if (!stato.partita || stato.partita.fixture.id !== m.fixture.id || stato.partita.sport !== 'nba') return;
+            stato.quote = { errore: `Quote non disponibili: ${e.message}` };
+        }
+        renderQuoteNba();
+        renderVerdettoNba();
+    }
+
+    // mercati letti: vincente (Home/Away), handicap asiatico e Over/Under, con la linea più condivisa e bilanciata tra i bookmaker
+    function elaboraQuoteNba(data) {
+        const resp = data && data.response && data.response[0];
+        if (!resp || !Array.isArray(resp.bookmakers) || !resp.bookmakers.length) return null;
+        const ml = {}, sp = {}, ou = {};
+        const agg = (mappa, chiave, lato, odd) => {
+            const o = parseFloat(odd); if (!Number.isFinite(o) || o <= 1) return;
+            const r = mappa[chiave] = mappa[chiave] || {};
+            const x = r[lato] = r[lato] || { s: 0, n: 0 };
+            x.s += o; x.n++;
+        };
+        resp.bookmakers.forEach(b => (b.bets || []).forEach(bet => {
+            const nome = String(bet.name || '').trim().toLowerCase();
+            const vals = bet.values || [];
+            if (nome === 'home/away') {
+                vals.forEach(v => { const val = String(v.value); const l = /^home$/i.test(val) ? 'Home' : /^away$/i.test(val) ? 'Away' : null; if (l) agg(ml, 'ML', l, v.odd); });
+            } else if (nome === 'over/under') {
+                vals.forEach(v => { const k = /^(over|under)\s+(\d+(?:\.\d+)?)$/i.exec(String(v.value).trim()); if (k) agg(ou, k[2], k[1][0].toUpperCase() + k[1].slice(1).toLowerCase(), v.odd); });
+            } else if (nome === 'asian handicap') {
+                vals.forEach(v => {
+                    const k = /^(home|away)\s*([+-]?\d+(?:\.\d+)?)$/i.exec(String(v.value).trim()); if (!k) return;
+                    const x = parseFloat(k[2]), casa = k[1].toLowerCase() === 'home';
+                    if (Math.abs(x * 2 - Math.round(x * 2)) > 1e-9) return;   // niente linee a quarti
+                    agg(sp, String(casa ? x : -x), casa ? 'Home' : 'Away', v.odd);
+                });
+            }
+        }));
+        const media = x => x.s / x.n;
+        const scegli = (mappa, lati) => {
+            const cand = [];
+            Object.entries(mappa).forEach(([linea, r]) => {
+                if (!lati.every(l => r[l])) return;
+                const q = lati.map(l => media(r[l]));
+                cand.push({ linea: parseFloat(linea), nb: Math.min(...lati.map(l => r[l].n)), q, sbil: Math.abs(1 / q[0] - 1 / q[1]) });
+            });
+            if (!cand.length) return null;
+            const maxN = Math.max(...cand.map(c => c.nb));
+            return cand.filter(c => c.nb >= Math.max(1, maxN / 2)).sort((x, y) => x.sbil - y.sbil)[0];
+        };
+        const mercato = (esiti, q) => { const inv = q.map(x => 1 / x), s = inv.reduce((a, b) => a + b, 0); return esiti.map((e, i) => ({ esito: e, quota: q[i], implicita: inv[i] / s, margine: s - 1 })); };
+        const out = { bookmakers: resp.bookmakers.length, aggiornato: resp.update, mercati: {} };
+        if (ml.ML && ml.ML.Home && ml.ML.Away) out.mercati.ML = mercato(['Home', 'Away'], [media(ml.ML.Home), media(ml.ML.Away)]);
+        const s = scegli(sp, ['Home', 'Away']); if (s) out.mercati.SP = { linea: s.linea, esiti: mercato(['Home', 'Away'], s.q) };
+        const o = scegli(ou, ['Over', 'Under']); if (o) out.mercati.OU = { linea: o.linea, esiti: mercato(['Over', 'Under'], o.q) };
+        return Object.keys(out.mercati).length ? out : null;
+    }
+
+    function nomiEsitiNba(q) {
+        const t = stato.partita.teams, nc = t.home.name, no = t.away.name;
+        const r = { 'ML|Home': `Vince ${nc}`, 'ML|Away': `Vince ${no}` };
+        if (q.mercati.SP) { r['SP|Home'] = `${nc} ${fmtLinea(q.mercati.SP.linea)}`; r['SP|Away'] = `${no} ${fmtLinea(-q.mercati.SP.linea)}`; }
+        if (q.mercati.OU) { const L = it(q.mercati.OU.linea, 1); r['OU|Over'] = `Over ${L}`; r['OU|Under'] = `Under ${L}`; }
+        return r;
+    }
+
+    // modello contro mercato, esito per esito
+    function confrontoQuoteNba(md, q) {
+        const nomiQ = nomiEsitiNba(q), out = [];
+        const aggiungi = (g, r, pModello) => out.push({ g, esito: r.esito, nome: nomiQ[`${g}|${r.esito}`], quota: r.quota, mercato: r.implicita, modello: pModello, sc: (pModello - r.implicita) * 100 });
+        if (q.mercati.ML) q.mercati.ML.forEach(r => aggiungi('ML', r, r.esito === 'Home' ? md.pCasa : 1 - md.pCasa));
+        if (q.mercati.SP) { const pC = probOltre(md.margine, md.sdM, -q.mercati.SP.linea); q.mercati.SP.esiti.forEach(r => aggiungi('SP', r, r.esito === 'Home' ? pC : 1 - pC)); }
+        if (q.mercati.OU) { const pO = probOltre(md.totale, md.sdT, q.mercati.OU.linea); q.mercati.OU.esiti.forEach(r => aggiungi('OU', r, r.esito === 'Over' ? pO : 1 - pO)); }
+        return out;
+    }
+
+    function renderVerdettoNba() {
+        const el = $('verdetto'); if (!el || !stato.analisi || !stato.partita) return;
+        const md = stato.analisi.modello, q = stato.quote, t = stato.partita.teams;
+        const nota = x => `<span class="lbl" style="line-height:1.5">${x}</span>`;
+        const scelta = (etichetta, nome) => `<div class="vd"><span class="lbl">${etichetta}</span><span class="num">${nome}</span></div>`;
+        let corpo, avvisi = '', cta = '';
+
+        if (q && !q.errore) {
+            const cand = confrontoQuoteNba(md, q);
+            const best = cand.filter(c => c.modello >= VALORE_P_MIN && c.sc >= NBA_VALORE_SCARTO_MIN).sort((x, y) => y.sc - x.sc)[0];
+            if (best) {
+                const cella = (l, v, stile) => `<div><span class="lbl">${l}</span><span class="num"${stile ? ` style="${stile}"` : ''}>${v}</span></div>`;
+                corpo = scelta('Spunto di valore', esc(best.nome))
+                    + `<div class="dc3">${cella('Modello', pc(best.modello))}${cella('Mercato', pc(best.mercato))}${cella('Scarto', '+' + it(best.sc), 'color:var(--ok)')}</div>`
+                    + nota(`Quota ${it(best.quota, 2)}, quota equa ${it(1 / best.modello, 2)}. Segnale da verificare: il mercato conosce infortuni, riposo e notizie che il modello non vede.`);
+            } else {
+                const maxSc = Math.max(...cand.map(c => Math.abs(c.sc)));
+                corpo = scelta('Modello e mercato allineati', 'Nessun valore')
+                    + nota(`Scarto massimo ${it(maxSc)} punti, sotto la soglia di ${NBA_VALORE_SCARTO_MIN}.`);
+            }
+        } else {
+            const [nomeTop, pTop] = md.pCasa >= 0.5 ? [t.home.name, md.pCasa] : [t.away.name, 1 - md.pCasa];
+            corpo = scelta('Favorita del modello', esc(nomeTop)) + nota(`Probabilità ${pc(pTop, 0)}, margine atteso ${it(Math.abs(md.margine), 1)} punti. Senza le quote non si può dire se convenga.`);
+            if (q && q.errore) avvisi += `<div class="avviso err" role="alert">${ic('info', 20)}<span>${esc(q.errore)}</span></div>`;
+            cta = `<div class="cta"><button type="button" class="btn" id="btnQuoteVerdetto">${q && q.errore ? 'Riprova' : 'Carica le quote'}</button><div class="lbl">${costoQuoteNba()}</div></div>`;
+        }
+        if (md.affidabilita === 'bassa') {
+            avvisi += `<div class="avviso">${ic('info', 20, 'margin-top:1px')}<span>Campione ridotto: solo ${md.campione} gare. Cautela.</span></div>`;
+        }
+        el.innerHTML = sez('Verdetto', corpo + avvisi + cta, `affidabilità ${md.affidabilita}, ${md.campione} gare`);
+        const b = $('btnQuoteVerdetto'); if (b) b.onclick = () => caricaQuote();
+    }
+
+    function renderQuoteNba() {
+        const el = $('grp-quote'); if (!el) return;
+        const md = stato.analisi && stato.analisi.modello; if (!md) return;
+        const q = stato.quote;
+        if (!q || q.errore) {
+            el.innerHTML = sez('Modello contro mercato',
+                `${q && q.errore ? `<div class="avviso err" role="alert">${ic('info', 20)}<span>${esc(q.errore)}</span></div>` : '<p style="font-size:16px;line-height:1.5;color:var(--ink2)">Confronta le probabilità del modello con quelle implicite nelle quote dei bookmaker: vincente, handicap e totale punti.</p>'}
+                 <div class="cta"><button type="button" class="btn" id="btnQuote">${q && q.errore ? 'Riprova' : 'Carica le quote'}</button><div class="lbl">${costoQuoteNba()}</div></div>`);
+            $('btnQuote').onclick = () => caricaQuote();
+            return;
+        }
+        const cand = confrontoQuoteNba(md, q);
+        const titoli = { ML: 'Vincente', SP: q.mercati.SP ? `Handicap, linea ${esc(breve(stato.partita.teams.home.name))} ${fmtLinea(q.mercati.SP.linea)}` : '', OU: q.mercati.OU ? `Totale punti, linea ${it(q.mercati.OU.linea, 1)}` : '' };
+        let righe = `<div class="qg qh"><span>Esito</span><span class="q-wide">Quota</span><span>Modello</span><span>Mercato</span><span>Scarto</span></div>`;
+        let gruppo = null;
+        cand.forEach(c => {
+            if (c.g !== gruppo) { gruppo = c.g; righe += `<div class="qgrp">${titoli[c.g]}</div>`; }
+            righe += `<div class="qg qr"><span class="es"><span>${esc(c.nome)}</span><span class="lbl tn">quota ${it(c.quota, 2)}</span></span>
+                <span class="q-wide mk tn" style="text-align:right">${it(c.quota, 2)}</span>
+                <span class="num">${pc(c.modello)}</span><span class="mk tn">${pc(c.mercato)}</span><span class="d">${deltaHtml(c.sc)}</span></div>`;
+        });
+        const top = [...cand].sort((x, y) => Math.abs(y.sc) - Math.abs(x.sc)).slice(0, 2).filter(x => Math.abs(x.sc) >= 1);
+        const sg = x => `${x.sc > 0 ? '+' : '−'}${it(Math.abs(x.sc))}`;
+        const intro = top.length
+            ? `<p style="font-size:16px;line-height:1.5;color:var(--ink2)">Gli scarti maggiori sono su <b class="b">${esc(top[0].nome)} (${sg(top[0])} punti)</b>${top[1] ? ` e <b class="b">${esc(top[1].nome)} (${sg(top[1])})</b>` : ''}. Un valore positivo vuol dire che il modello stima l'esito più probabile del mercato.</p>`
+            : `<p style="font-size:16px;line-height:1.5;color:var(--ink2)">Modello e mercato sono molto vicini su tutti gli esiti.</p>`;
+        const margine = q.mercati.ML ? `, margine ${it(q.mercati.ML[0].margine * 100)}%` : '';
+        el.innerHTML = sez('Modello contro mercato',
+            `${intro}<div class="scroll-x">${righe}</div>
+             <p class="lbl" style="line-height:1.5">Probabilità del mercato: 1/quota, corretta per il margine. Il modello non conosce infortuni, riposo e back-to-back: lo scarto è un segnale da verificare, non una certezza. Sulle linee intere la parità sulla linea (rimborso) è esclusa dal calcolo.</p>
+             <button type="button" class="btn sec" id="btnQuote">${ic('refresh', 18)}Aggiorna le quote</button>`,
+            `${q.bookmakers} bookmaker${margine}`);
+        $('btnQuote').onclick = () => { store.del(chiaveCache(urlApi(apiN.quote(stato.partita.fixture.id)))); stato.quote = null; stato.cacheQuote.delete(kAn(stato.partita)); caricaQuote(); };
+    }
+
+    // ----- schede dell'analisi -----
+    function righeProb(voci) {
+        return voci.map(({ t, p, eq }) => `<div><div class="r"><span>${t}${eq ? '<br><span class="lbl">linea più equilibrata</span>' : ''}</span><span><span class="lbl tn">${qEqua(p)}</span><span class="num">${pc(p)}</span></span></div><div class="bar"><div style="width:${(p * 100).toFixed(1)}%"></div></div></div>`).join('');
+    }
+
+    function renderSintesiNba(a) {
+        const md = a.modello, n = nomi(), t = stato.partita.teams;
+        const col = [[n.casa, md.pCasa, 'var(--casa)'], [n.osp, 1 - md.pCasa, 'var(--osptx)']];
+        const celle = col.map(([nm, p, c]) => `<div><span class="nm">${nm}</span><span class="num pc" style="color:${c}">${it(p * 100)}<small>%</small></span><span class="lbl tn">${qEqua(p)}</span></div>`).join('');
+        const seg = [['var(--casa)', md.pCasa], ['var(--osp)', 1 - md.pCasa]].map(([c, p]) => `<div style="flex:${(p * 100).toFixed(1)} 1 0%;background:${c}"></div>`).join('');
+        const ticks = [25, 50, 75].map(x => `<i style="left:${x}%"></i><span style="left:${x}%">${x}%</span>`).join('');
+        const fav = md.margine >= 0 ? t.home.name : t.away.name;
+        const prob = sez('Probabilità di vittoria',
+            `<div class="v3 v2">${celle}</div>
+             <div><div class="seg" role="img" aria-label="Probabilità di vittoria delle due squadre su una scala da 0 a 100">${seg}</div><div class="ticks">${ticks}</div></div>
+             <div class="due"><div><span class="lbl">Punti attesi</span><span class="num"><span style="color:var(--casa)">${it(md.lamCasa, 1)}</span> – <span style="color:var(--osptx)">${it(md.lamOspite, 1)}</span></span><span class="lbl">totale ${it(md.totale, 1)}</span></div>
+                  <div><span class="lbl">Margine atteso</span><span class="num">${esc(breve(fav))} +${it(Math.abs(md.margine), 1)}</span><span class="lbl tn">scarto tipico ±${it(md.sdM, 0)}</span></div></div>`,
+            `affidabilità ${md.affidabilita}, ${md.campione} gare`, true);
+
+        const Tc = Math.floor(md.margine) + 0.5, Lc = Math.floor(md.totale) + 0.5;
+        const hc = esc(breve(t.home.name));
+        const righeSp = [Tc - 3, Tc, Tc + 3].map(T => ({ t: `${hc} ${fmtLinea(-T)}`, p: probOltre(md.margine, md.sdM, T), eq: T === Tc }));
+        const righeTot = [Lc - 6, Lc, Lc + 6].map(L => ({ t: `Over ${it(L, 1)} punti`, p: probOltre(md.totale, md.sdT, L), eq: L === Lc }));
+        const mercati = sez('Handicap e totale punti', `<div class="mg">${righeProb(righeSp)}${righeProb(righeTot)}</div><span class="lbl" style="line-height:1.5">Handicap: probabilità che ${n.casa} copra la linea. Totale: probabilità di Over.</span>`);
+        const nota = md.muReale ? '' : `<div class="avviso">${ic('info', 20, 'margin-top:1px')}<span>Classifica non disponibile col piano gratuito: uso la media tipica del campionato (${it(md.muL, 1)} punti a squadra).</span></div>`;
+        const f = x => it(x, 2);
+        const sh = a.statCasa, sa = a.statOspite;
+        const metodo = `<details class="mt"><summary><span>Come è calcolato</span><span class="chev">${ic('down', 20)}</span></summary><div class="dentro">
+            <span>Media di campionato: <b class="b">${it(md.muL, 1)}</b> punti a squadra ${md.muReale ? '(calcolata dalla classifica)' : '(valore tipico)'}. Il fattore campo vale ${it(NBA_VANTAGGIO_CASA, 1)} punti di margine (valore tipico): ${it(md.muC, 1)} in casa, ${it(md.muO, 1)} in trasferta.</span>
+            <span>Punti attesi di ${n.casa} = ${it(md.muC, 1)} × attacco <b class="b">${f(md.offC)}</b> × difesa avversaria <b class="b">${f(md.difO)}</b>.</span>
+            <span>Punti attesi di ${n.osp} = ${it(md.muO, 1)} × attacco <b class="b">${f(md.offO)}</b> × difesa avversaria <b class="b">${f(md.difC)}</b>.</span>
+            <span>${n.casa}: ${sh.v.tot}V ${sh.p.tot}P, fatti ${it(sh.pf.tot, 1)} e subiti ${it(sh.pa.tot, 1)} a partita. ${n.osp}: ${sa.v.tot}V ${sa.p.tot}P, fatti ${it(sa.pf.tot, 1)} e subiti ${it(sa.pa.tot, 1)}. Le forze sono avvicinate alla media (K = ${NBA_K_SHRINK}) e i dati in casa o fuori pesano in proporzione alle gare giocate (K = ${NBA_K_SEDE}).</span>
+            <span>Margine e totale punti sono trattati come variabili normali con deviazione standard ${it(md.sdM, 0)} e ${it(md.sdT, 0)} punti: sono valori tipici, non stimati sui nostri dati. Il Poisson del calcio qui non regge, perché i punti sono troppi e il basket non ha pareggi (i supplementari decidono).</span>
+            <span>Il modello non conosce infortuni, riposo, partite ravvicinate (back-to-back) né rotazioni: nell'NBA contano molto, quindi controllali prima di fidarti dello scarto col mercato.</span>
+            <span>La quota equa è 1 diviso la probabilità e non include il margine del bookmaker.</span></div></details>`;
+        $('grp-sintesi').innerHTML = `<div class="grid2"><div class="pila"><div id="verdetto"></div>${prob}</div><div class="pila">${mercati}${nota}</div></div>${metodo}`;
+        renderVerdettoNba();
+    }
+
+    function renderPunteggiNba(a) {
+        const md = a.modello, n = nomi(), t = stato.partita.teams;
+        const fav = md.margine >= 0 ? t.home.name : t.away.name;
+        const punti = sez('Punti attesi',
+            `<div class="due"><div><span class="lbl">${n.casa}</span><span class="num" style="color:var(--casa)">${it(md.lamCasa, 1)}</span></div><div><span class="lbl">${n.osp}</span><span class="num" style="color:var(--osptx)">${it(md.lamOspite, 1)}</span></div></div>
+             <div class="dc3"><div><span class="lbl">Totale</span><span class="num">${it(md.totale, 1)}</span></div><div><span class="lbl">Margine</span><span class="num">${esc(breve(fav))} +${it(Math.abs(md.margine), 1)}</span></div><div><span class="lbl">Incertezza</span><span class="num">±${it(md.sdM, 0)}</span></div></div>
+             <span class="lbl" style="line-height:1.5">L'incertezza è la deviazione standard del margine: circa due partite su tre finiscono entro quei punti dal margine atteso.</span>`);
+        const p = fasceMargine(md);
+        const nc = esc(breve(t.home.name)), no = esc(breve(t.away.name));
+        const nomiFasce = [`${nc} vince di 15 o più`, `${nc} vince di 8–14`, `${nc} vince di 1–7`, `${no} vince di 1–7`, `${no} vince di 8–14`, `${no} vince di 15 o più`];
+        const margine = sez('Margine di vittoria', `<div class="mg">${righeProb(nomiFasce.map((nm, i) => ({ t: nm, p: p[i] })))}</div><span class="lbl">Probabilità che la partita finisca con quella differenza punti.</span>`);
+        const L0 = Math.floor(md.totale) + 0.5;
+        const totale = sez('Totale punti', `<div class="mg">${righeProb([-10, -5, 0, 5, 10].map(d => ({ t: `Over ${it(L0 + d, 1)} punti`, p: probOltre(md.totale, md.sdT, L0 + d), eq: d === 0 })))}</div><span class="lbl">Probabilità che i punti complessivi superino la linea.</span>`);
+        $('grp-punteggi').innerHTML = `<div class="grid2"><div class="pila">${punti}${totale}</div>${margine}</div>`;
+    }
+
+    function renderSquadreNba(a) {
+        const sh = a.statCasa, sa = a.statOspite, n = nomi();
+        const quota = (v, p) => (v + p) ? Math.round(100 * v / (v + p)) : null;
+        // [etichetta, casa, ospite, minimo della barra, massimo della barra, formato]
+        const righe = [
+            ['Punti fatti a partita', sh.pf.tot, sa.pf.tot, 95, 130, 'd'],
+            ['Punti subiti a partita', sh.pa.tot, sa.pa.tot, 95, 130, 'd'],
+            ['Differenza punti', sh.pf.tot - sh.pa.tot, sa.pf.tot - sa.pa.tot, -12, 12, 's'],
+            ['Partite vinte', quota(sh.v.tot, sh.p.tot), quota(sa.v.tot, sa.p.tot), 0, 100, 'p'],
+            ['Punti fatti in sede', sh.n.casa ? sh.pf.casa : null, sa.n.fuori ? sa.pf.fuori : null, 95, 130, 'd'],
+            ['Punti subiti in sede', sh.n.casa ? sh.pa.casa : null, sa.n.fuori ? sa.pa.fuori : null, 95, 130, 'd']
+        ];
+        const val = (v, k) => v === null ? 'n/d' : k === 'p' ? v + '%' : k === 's' ? (v > 0 ? '+' : v < 0 ? '−' : '') + it(Math.abs(v)) : it(v);
+        const larg = (v, lo, hi) => v === null ? 0 : clamp((v - lo) / (hi - lo), 0, 1) * 100;
+        const cf = righe.map(([l, x, y, lo, hi, k]) => `<div class="cf-r"><div class="cf-t"><span class="num" style="color:var(--casa)">${val(x, k)}</span><span>${l}</span><span class="num" style="color:var(--osptx)">${val(y, k)}</span></div>
+            <div class="cf-b"><div><i style="width:${larg(x, lo, hi).toFixed(0)}%;background:var(--casa)"></i></div><div><i style="width:${larg(y, lo, hi).toFixed(0)}%;background:var(--osp)"></i></div></div></div>`).join('');
+        const rec = (s, lato) => `${s.v[lato]}V ${s.p[lato]}P`;
+        const leg = `<div class="leg" style="justify-content:space-between"><span><i style="background:var(--casa)"></i>${n.casa}</span><span><i style="background:var(--osp)"></i>${n.osp}</span></div>`;
+        const confronto = sez('Squadre a confronto', `${leg}<div class="cf">${cf}
+            <div class="cf-t cf-rec"><span>${rec(sh, 'tot')}</span><span>Record stagionale</span><span>${rec(sa, 'tot')}</span></div>
+            <div class="cf-t cf-rec" style="border-top:0;padding-top:0"><span>${rec(sh, 'casa')}</span><span>In casa, fuori</span><span>${rec(sa, 'fuori')}</span></div></div>`);
+        const cl = a.classifica, m = stato.partita;
+        const posiz = id => { const e = cl && cl.perTeam[id]; return e && e.posizione ? `<span class="num">${e.posizione}°</span><span class="lbl">${e.gruppo ? esc(e.gruppo) : ''}</span>` : '<span class="num">n/d</span>'; };
+        const classifica = cl ? sez('Classifica', `<div class="due"><div><span class="lbl">${n.casa}</span>${posiz(m.teams.home.id)}</div><div><span class="lbl">${n.osp}</span>${posiz(m.teams.away.id)}</div></div>`) : '';
+        const assenze = sez('Infortuni e riposo', `<div class="avviso">${ic('info', 20, 'margin-top:1px')}<span>Con la sola API-Basketball infortuni, assenze, riposo e partite ravvicinate non sono disponibili. Nell'NBA un'assenza pesante sposta il margine di diversi punti: controllali prima di usare il modello.</span></div>`);
+        $('grp-squadre').innerHTML = `<div class="grid2">${confronto}<div class="pila">${classifica}${assenze}</div></div>`;
+    }
+
     // ===================== SCHEDE E NAVIGAZIONE TRA SEZIONI =====================
     function applicaTab() {
         const v = $('vistaAnalisi');
@@ -1580,7 +2039,7 @@
             return;
         }
         stato.tab = t;
-        if (stato.partita) { try { history.replaceState(null, '', `#/p/${stato.partita.fixture.id}/${t}`); } catch (e) {} }
+        if (stato.partita) { try { history.replaceState(null, '', rotta(stato.partita.fixture.id, t)); } catch (e) {} }
         applicaTab();
         const topH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--top-h')) || 64;
         const y = $('hdrMatch').getBoundingClientRect().bottom + window.scrollY - (parseFloat(getComputedStyle($('tabs')).top) || topH);
@@ -1632,7 +2091,7 @@
         const i = lista.findIndex(x => stato.partita && x.fixture.id === stato.partita.fixture.id);
         const j = i + delta;
         if (i < 0 || j < 0 || j >= lista.length) return;
-        vaiA(`#/p/${lista[j].fixture.id}/${stato.tab}`, true);
+        vaiA(rotta(lista[j].fixture.id, stato.tab), true);
     }
     ['btnPrec', 'btnSucc'].forEach((id, k) => $(id).addEventListener('click', e => { e.preventDefault(); if ($(id).getAttribute('aria-disabled') !== 'true') vaiPartitaVicina(k ? 1 : -1); }));
     document.addEventListener('keydown', e => {
@@ -1648,12 +2107,16 @@
     // ===================== DATI =====================
     function renderDati() {
         const durata = ms => ms >= 3600e3 ? `${ms / 3600e3} ${ms / 3600e3 === 1 ? 'ora' : 'ore'}` : `${ms / 60e3} minuti`;
-        $('datiTtl').innerHTML = [['Partite di oggi', TTL.partiteOggi], ['Partite di altri giorni', TTL.partite], ['Previsioni e classifica', TTL.previsioni], ['Infortuni', TTL.infortuni], ['Quote', TTL.quote]]
+        $('datiTtl').innerHTML = [['Partite di oggi', TTL.partiteOggi], ['Partite di altri giorni', TTL.partite], ['Previsioni, statistiche e classifica', TTL.previsioni], ['Infortuni', TTL.infortuni], ['Quote', TTL.quote]]
             .map(([n, t]) => `<div><span>${n}</span><span>${durata(t)}</span></div>`).join('');
     }
 
     // ===================== AVVIO =====================
     window.addEventListener('DOMContentLoaded', () => {
+        // sport di partenza: quello della rotta aperta, altrimenti l'ultimo usato
+        stato.sport = /^#\/n\/\d+/.test(location.hash) ? 'nba' : /^#\/p\/\d+/.test(location.hash) ? 'calcio' : (store.get(CHIAVE_SPORT) === 'nba' ? 'nba' : 'calcio');
+        stato.filtroLega = stato.sport === 'nba' ? 'tutte' : 'principali';
+        renderSport(); etichetteTab();
         // icone dei pulsanti
         $('icoLogo').innerHTML = ic('logo', 20);
         $('btnCerca').innerHTML = ic('search', 20); $('btnCercaWide').innerHTML = ic('search', 20);
@@ -1673,12 +2136,12 @@
         $('btnSalvaChiave').onclick = () => salvaChiave($('inputChiave'));
         $('btnRimuoviChiave').onclick = rimuoviChiave;
         $('shFatto').onclick = chiudiSheet; $('shVel').onclick = chiudiSheet;
-        $('btnIndietro').addEventListener('click', e => { e.preventDefault(); if (history.length > 1 && location.hash.startsWith('#/p/')) history.back(); else vaiA('#/'); });
+        $('btnIndietro').addEventListener('click', e => { e.preventDefault(); if (history.length > 1 && /^#\/[pn]\//.test(location.hash)) history.back(); else vaiA('#/'); });
         $('logoWide').addEventListener('click', e => { e.preventDefault(); vaiA('#/'); });
         ['nvPartite', 'nvDati', 'btnDatiWide'].forEach(id => $(id).addEventListener('click', e => { e.preventDefault(); vaiA($(id).getAttribute('href')); }));
         $('nvAnalisi').addEventListener('click', e => {
             e.preventDefault();
-            if (stato.partita) vaiA(`#/p/${stato.partita.fixture.id}`);
+            if (stato.partita) vaiA(rotta(stato.partita.fixture.id));
             else { vaiA('#/'); toast('Scegli una partita da analizzare'); }
         });
         window.addEventListener('popstate', applicaRotta);
@@ -1692,7 +2155,7 @@
         renderChiaveStato();
         aggiornaBadge();
         aggiornaNavigazione();
-        if (/^#\/p\/\d+/.test(location.hash)) stato.rottaPendente = location.hash;
+        if (/^#\/[pn]\/\d+/.test(location.hash)) stato.rottaPendente = location.hash;
         else if (location.hash === '#/dati') impostaVista('dati');
         inizializzaCalendario();
     });
