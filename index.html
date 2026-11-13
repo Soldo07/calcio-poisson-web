@@ -680,7 +680,8 @@
         quote: id => `/odds?fixture=${id}`
     };
     const apiN = {
-        partite: d => `@nba/games?date=${d}&league=${NBA_LEGA_ID}&timezone=Europe/Rome`,
+        // API-Basketball richiede sempre la stagione insieme alla lega (formato "2026-2027"; la NBA inizia a ottobre)
+        partite: d => { const [a, m] = d.split('-').map(Number); const inizio = m >= 8 ? a : a - 1; return `@nba/games?date=${d}&league=${NBA_LEGA_ID}&season=${inizio}-${inizio + 1}&timezone=Europe/Rome`; },
         statistiche: (squadra, stagione) => `@nba/statistics?league=${NBA_LEGA_ID}&season=${stagione}&team=${squadra}`,
         classifica: stagione => `@nba/standings?league=${NBA_LEGA_ID}&season=${stagione}`,
         quote: id => `@nba/odds?game=${id}`
